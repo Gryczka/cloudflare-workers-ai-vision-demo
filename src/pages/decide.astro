@@ -1,0 +1,48 @@
+---
+/** `/decide` — Structured multimodal decision view powered by `@cf/cloudflare/clef-flash`. */
+import DecideDemo from '../components/DecideDemo.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import Hero from '../components/Hero.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Layout from '../layouts/Layout.astro';
+
+const steps = [
+	{
+		accent: 'compute',
+		title: 'Define typed questions',
+		body: 'Switch between built-in Webcam & Gestures, Safety & Field, and Emoji presets combining noul (binary), choice (multi-class), and score (ordered rubric) questions.',
+	},
+	{
+		accent: 'ai',
+		title: 'Run Clef Flash in one pass',
+		body: 'Workers AI evaluates the sampled camera frame and state against all active questions in a single forward pass without free-form token generation.',
+	},
+	{
+		accent: 'media',
+		title: 'Read calibrated probabilities',
+		body: 'Inspect live Yes/No probabilities, winning options with per-class probability bars, and probability-weighted rubric scores with input token telemetry.',
+	},
+] as const;
+---
+
+<Layout>
+	<Header />
+	<main>
+		<Hero
+			kicker="Structured multimodal decisions on Workers AI"
+			title="Turn live video into calibrated probabilities"
+			subtitle="Evaluate camera frames against typed noul, choice, and score questions in a single forward pass with Cloudflare's Clef Flash decision model—zero output-token generation."
+			model="@cf/cloudflare/clef-flash"
+			meta="$0.038 per M input tokens · 0 output tokens"
+			cta={{ label: 'Open the decision dashboard', href: '#demo' }}
+		/>
+		<DecideDemo />
+		<HowItWorks
+			title="One forward pass, typed probabilities"
+			subtitle="Instead of generating free-form text and parsing JSON, Clef Flash directly scores every candidate answer across your question schema."
+			steps={steps}
+		/>
+	</main>
+	<Footer />
+</Layout>

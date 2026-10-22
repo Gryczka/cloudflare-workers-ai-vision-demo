@@ -1,0 +1,2161 @@
+---
+/**
+ * DecideDemo — markup, styles, and inlined client logic for the live
+ * multimodal decision dashboard (`/decide`) powered by `@cf/cloudflare/clef-flash`.
+ *
+ * Streams sampled 640x360 JPEG frames with single-flight AbortController
+ * concurrency control, switches between built-in question presets (`webcam`,
+ * `safety`, `emoji`), provides a live question editor (`Edit questions (E)` button
+ * or `E` shortcut) persisted in `localStorage`, and renders calibrated
+ * probability distributions for all three Clef question types (`noul`,
+ * `choice`, `score`).
+ *
+ * Presets come from `PRESETS` in `src/pages/api/decide.ts` (passed to the
+ * inline script with `define:vars`), so the buttons, the editor defaults,
+ * and the API always agree. A preset with `hero` also gets a big readout of
+ * its winning option (the Emoji preset shows the chosen emoji).
+ */
+import { PRESETS } from '../pages/api/decide.ts';
+
+const presetButtons = Object.entries(PRESETS).map(([key, preset]) => ({ key, label: preset.label }));
+const defaultPresetKey = presetButtons[0].key;
+const defaultPreset = PRESETS[defaultPresetKey as keyof typeof PRESETS];
+---
+
+<section id="demo" class="demo-section container scroll-reveal" aria-labelledby="decide-title">
+	<div class="demo-card corner-card" data-decide-demo>
+		<span class="corner-top-right"></span>
+		<span class="corner-bottom-left"></span>
+
+		<div class="demo-header">
+			<div>
+				<p class="eyebrow">Structured multimodal decisions</p>
+				<h2 id="decide-title">Live probability decisions</h2>
+			</div>
+			<div class="status-badge" aria-live="polite">
+				<span class="status-dot" aria-hidden="true"></span>
+				<span data-status-text>Idle</span>
+			</div>
+		</div>
+
+		<div class="preset-bar">
+			<div class="preset-selector" role="group" aria-label="Decision question preset selector">
+				<span class="selector-label">Preset</span>
+				{presetButtons.map(({ key, label }) => (
+					<button
+						class:list={['preset-button', { active: key === defaultPresetKey }]}
+						type="button"
+						data-preset-button
+						data-preset={key}
+					>
+						{label}
+					</button>
+				))}
+			</div>
+
+			<button
+				class="editor-toggle-button"
+				type="button"
+				data-editor-toggle
+				aria-expanded="false"
+				aria-controls="decide-question-editor"
+			>
+				Edit questions (E)
+			</button>
+		</div>
+
+		<div
+			id="decide-question-editor"
+			class="question-editor"
+			data-question-editor
+			hidden
+			aria-label="Live question JSON editor"
+		>
+			<div class="editor-header">
+				<div>
+					<p class="eyebrow">Custom schema</p>
+					<h3>Edit state &amp; questions JSON</h3>
+				</div>
+				<span class="editor-hint">1–64 questions · types: <code>noul</code>, <code>choice</code>, <code>score</code></span>
+			</div>
+
+			<div class="editor-fields">
+				<label class="editor-field" for="decide-state-input">
+					<span class="field-label">State</span>
+					<input
+						id="decide-state-input"
+						class="editor-input"
+						type="text"
+						data-editor-state
+						placeholder="Describe the scene or camera context..."
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</label>
+
+				<label class="editor-field" for="decide-questions-input">
+					<span class="field-label">Questions JSON</span>
+					<textarea
+						id="decide-questions-input"
+						class="editor-textarea"
+						rows="12"
+						data-editor-questions
+						spellcheck="false"
+					></textarea>
+				</label>
+			</div>
+
+			<div class="editor-feedback" data-editor-feedback hidden role="status" aria-live="polite"></div>
+
+			<div class="editor-actions">
+				<button class="control-button primary editor-action" type="button" data-editor-apply>
+					Apply
+				</button>
+				<button class="control-button outline editor-action" type="button" data-editor-format>
+					Format
+				</button>
+				<button class="control-button ghost editor-action" type="button" data-editor-reset>
+					Reset to preset
+				</button>
+			</div>
+		</div>
+
+		<div class="demo-grid">
+			<div class="video-panel">
+				<div class="video-stage" data-video-stage>
+					<video id="decide-camera-video" muted playsinline></video>
+					<div class="frame-pulse" data-frame-pulse aria-hidden="true"></div>
+					<div class="stage-tag" data-stage-tag>
+						no text generation · one forward pass · calibrated probabilities
+					</div>
+					<div class="empty-state" data-empty-state>
+						<div class="camera-icon" aria-hidden="true">
+							<svg viewBox="0 0 24 24">
+								<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5V8l3.72-2.13A1.5 1.5 0 0 1 22 7.17v9.66a1.5 1.5 0 0 1-2.28 1.3L16 16v1.5a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 17.5v-11Zm2.5-.5A.5.5 0 0 0 6 6.5v11a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5h-7Zm9.5 4.3v3.4l4 2.29V8.01l-4 2.29Z"></path>
+							</svg>
+						</div>
+						<p data-empty-title>Start the camera to evaluate typed questions with Clef Flash.</p>
+						<span data-empty-copy>
+							Each sampled frame is evaluated against all active questions in a single forward pass—no free-form token generation required.
+						</span>
+					</div>
+				</div>
+
+				<canvas id="decide-capture-buffer" width="640" height="360" hidden></canvas>
+
+				<div class="controls" aria-label="Decision dashboard controls">
+					<button class="control-button primary" type="button" data-start-button>Start camera</button>
+					<button class="control-button ghost" type="button" data-pause-button disabled>Pause stream</button>
+					<button class="control-button outline" type="button" data-switch-button disabled>Switch camera</button>
+				</div>
+
+				<div class="error-panel" data-error-panel hidden role="alert"></div>
+			</div>
+
+			<aside class="decisions-panel" aria-labelledby="decisions-panel-title">
+				<div class="panel-heading">
+					<div>
+						<p class="eyebrow">Decision stream</p>
+						<h3 id="decisions-panel-title" data-preset-title>{defaultPreset.label}</h3>
+					</div>
+					<span class="threshold" data-active-model>@cf/cloudflare/clef-flash</span>
+				</div>
+
+				<p class="state-context" data-state-context>
+					State: {defaultPreset.state}
+				</p>
+
+				<div class="hero-readout" data-hero hidden aria-live="polite">
+					<p class="hero-symbol" data-hero-symbol aria-hidden="true"></p>
+					<p class="hero-label" data-hero-label></p>
+					<p class="hero-meta" data-hero-meta></p>
+					<ul class="hero-parts" data-hero-parts hidden></ul>
+					<ul class="hero-checks" data-hero-checks hidden></ul>
+					<p class="hero-note" data-hero-note hidden></p>
+				</div>
+
+				<div class="decision-cards" data-decision-cards aria-live="polite"></div>
+			</aside>
+		</div>
+
+		<div class="stats-grid" aria-label="Decision telemetry">
+			<div class="stat-card">
+				<span>Round trip</span>
+				<strong data-stat-latency>-</strong>
+			</div>
+			<div class="stat-card">
+				<span>Inference</span>
+				<strong data-stat-inference>-</strong>
+			</div>
+			<div class="stat-card">
+				<span>Decisions / sec</span>
+				<strong data-stat-dps>-</strong>
+			</div>
+			<div class="stat-card">
+				<span>Questions</span>
+				<strong data-stat-questions>{Object.keys(defaultPreset.questions).length}</strong>
+			</div>
+			<div class="stat-card">
+				<span>Input tokens</span>
+				<strong data-stat-tokens>-</strong>
+			</div>
+			<div class="stat-card">
+				<span>Payload</span>
+				<strong data-stat-bytes>-</strong>
+			</div>
+		</div>
+	</div>
+</section>
+
+<script is:inline define:vars={{ presets: PRESETS, defaultPresetKey }}>
+	(() => {
+		const root = document.querySelector('[data-decide-demo]');
+		if (!root) return;
+
+		const sampleMs = 900;
+		const captureWidth = 640;
+		const captureHeight = 360;
+		const storageKey = 'cf_vision_decide_custom_v1';
+		const questionIdPattern = /^[a-zA-Z0-9_.-]{1,100}$/;
+
+		const refs = {
+			video: root.querySelector('#decide-camera-video'),
+			buffer: root.querySelector('#decide-capture-buffer'),
+			empty: root.querySelector('[data-empty-state]'),
+			pulse: root.querySelector('[data-frame-pulse]'),
+			statusText: root.querySelector('[data-status-text]'),
+			startButton: root.querySelector('[data-start-button]'),
+			pauseButton: root.querySelector('[data-pause-button]'),
+			switchButton: root.querySelector('[data-switch-button]'),
+			errorPanel: root.querySelector('[data-error-panel]'),
+			presetButtons: root.querySelectorAll('[data-preset-button]'),
+			editorToggle: root.querySelector('[data-editor-toggle]'),
+			editorPanel: root.querySelector('[data-question-editor]'),
+			editorState: root.querySelector('[data-editor-state]'),
+			editorQuestions: root.querySelector('[data-editor-questions]'),
+			editorFeedback: root.querySelector('[data-editor-feedback]'),
+			editorApply: root.querySelector('[data-editor-apply]'),
+			editorFormat: root.querySelector('[data-editor-format]'),
+			editorReset: root.querySelector('[data-editor-reset]'),
+			presetTitle: root.querySelector('[data-preset-title]'),
+			hero: root.querySelector('[data-hero]'),
+			heroSymbol: root.querySelector('[data-hero-symbol]'),
+			heroLabel: root.querySelector('[data-hero-label]'),
+			heroMeta: root.querySelector('[data-hero-meta]'),
+			heroParts: root.querySelector('[data-hero-parts]'),
+			heroChecks: root.querySelector('[data-hero-checks]'),
+			heroNote: root.querySelector('[data-hero-note]'),
+			stateContext: root.querySelector('[data-state-context]'),
+			decisionCards: root.querySelector('[data-decision-cards]'),
+			latency: root.querySelector('[data-stat-latency]'),
+			inference: root.querySelector('[data-stat-inference]'),
+			dps: root.querySelector('[data-stat-dps]'),
+			questionsCount: root.querySelector('[data-stat-questions]'),
+			tokens: root.querySelector('[data-stat-tokens]'),
+			bytes: root.querySelector('[data-stat-bytes]'),
+		};
+
+		let stream = null;
+		let intervalId = null;
+		let inFlight = null;
+		let facingMode = 'user';
+		let preferredDeviceId = null;
+		let selectedPreset = defaultPresetKey;
+		let lastAnswers = null;
+		let editorOpen = false;
+		const customOverrides = loadSavedOverrides();
+		const recentTimestamps = [];
+
+		const bufferContext = refs.buffer.getContext('2d', { willReadFrequently: false });
+
+		function isPlainObject(value) {
+			return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+		}
+
+		function cloneQuestions(questions) {
+			return JSON.parse(JSON.stringify(questions));
+		}
+
+		function humanizeOptionKey(key) {
+			const cleaned = String(key || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+			return cleaned || String(key || '');
+		}
+
+		function validateQuestionsObject(rawQuestions) {
+			if (!isPlainObject(rawQuestions)) {
+				return { ok: false, error: '`questions` must be a non-empty JSON object.' };
+			}
+
+			const entries = Object.entries(rawQuestions);
+			if (entries.length < 1 || entries.length > 64) {
+				return { ok: false, error: '`questions` must contain between 1 and 64 questions.' };
+			}
+
+			const normalized = {};
+
+			for (const [id, rawQuestion] of entries) {
+				if (!questionIdPattern.test(id)) {
+					return {
+						ok: false,
+						error: `Invalid question ID "${id}". Use 1-100 letters, digits, '_', '.', or '-'.`,
+					};
+				}
+
+				if (!isPlainObject(rawQuestion)) {
+					return { ok: false, error: `Question "${id}" must be an object.` };
+				}
+
+				const type = rawQuestion.type;
+				if (type !== 'noul' && type !== 'choice' && type !== 'score') {
+					return {
+						ok: false,
+						error: `Question "${id}" has unsupported type "${String(type)}". Expected "noul", "choice", or "score".`,
+					};
+				}
+
+				const instructions =
+					typeof rawQuestion.instructions === 'string' ? rawQuestion.instructions.trim() : '';
+				if (!instructions) {
+					return {
+						ok: false,
+						error: `Question "${id}" requires a non-empty "instructions" string.`,
+					};
+				}
+
+				if (type === 'noul') {
+					const question = { type: 'noul', instructions };
+					if (rawQuestion.criteria !== undefined) {
+						if (!isPlainObject(rawQuestion.criteria)) {
+							return {
+								ok: false,
+								error: `Question "${id}" criteria must be an object when provided.`,
+							};
+						}
+						const criteria = {};
+						if (typeof rawQuestion.criteria.true === 'string' && rawQuestion.criteria.true.trim()) {
+							criteria.true = rawQuestion.criteria.true.trim();
+						}
+						if (typeof rawQuestion.criteria.false === 'string' && rawQuestion.criteria.false.trim()) {
+							criteria.false = rawQuestion.criteria.false.trim();
+						}
+						if (Object.keys(criteria).length > 0) {
+							question.criteria = criteria;
+						}
+					}
+					normalized[id] = question;
+					continue;
+				}
+
+				if (type === 'choice') {
+					if (!isPlainObject(rawQuestion.criteria)) {
+						return {
+							ok: false,
+							error: `Choice question "${id}" requires a "criteria" object with at least 2 options.`,
+						};
+					}
+					const optionEntries = Object.entries(rawQuestion.criteria);
+					if (optionEntries.length < 2 || optionEntries.length > 255) {
+						return {
+							ok: false,
+							error: `Choice question "${id}" must define between 2 and 255 options in "criteria".`,
+						};
+					}
+
+					const criteria = {};
+					for (const [optionKey, rawDesc] of optionEntries) {
+						const trimmedKey = optionKey.trim();
+						if (!trimmedKey) {
+							return {
+								ok: false,
+								error: `Choice question "${id}" contains an empty option key.`,
+							};
+						}
+						if (rawDesc === null || rawDesc === undefined) {
+							criteria[trimmedKey] = humanizeOptionKey(trimmedKey);
+						} else if (typeof rawDesc === 'string') {
+							const trimmedDesc = rawDesc.trim();
+							criteria[trimmedKey] = trimmedDesc || humanizeOptionKey(trimmedKey);
+						} else {
+							return {
+								ok: false,
+								error: `Option "${trimmedKey}" in question "${id}" must have a string or null description.`,
+							};
+						}
+					}
+
+					normalized[id] = { type: 'choice', instructions, criteria };
+					continue;
+				}
+
+				if (!Array.isArray(rawQuestion.criteria)) {
+					return {
+						ok: false,
+						error: `Score question "${id}" requires a "criteria" array of at least 2 levels.`,
+					};
+				}
+				if (rawQuestion.criteria.length < 2 || rawQuestion.criteria.length > 10) {
+					return {
+						ok: false,
+						error: `Score question "${id}" must define between 2 and 10 levels in "criteria".`,
+					};
+				}
+
+				const scoreCriteria = [];
+				for (let i = 0; i < rawQuestion.criteria.length; i += 1) {
+					const item = rawQuestion.criteria[i];
+					const text = typeof item === 'string' ? item.trim() : '';
+					if (!text) {
+						return {
+							ok: false,
+							error: `Score question "${id}" level ${i} must be a non-empty string.`,
+						};
+					}
+					scoreCriteria.push(text);
+				}
+
+				normalized[id] = { type: 'score', instructions, criteria: scoreCriteria };
+			}
+
+			return { ok: true, questions: normalized };
+		}
+
+		function loadSavedOverrides() {
+			const loaded = {};
+			try {
+				const raw = window.localStorage.getItem(storageKey);
+				if (!raw) return loaded;
+				const parsed = JSON.parse(raw);
+				if (!isPlainObject(parsed)) return loaded;
+
+				for (const key of Object.keys(presets)) {
+					const entry = parsed[key];
+					if (!isPlainObject(entry)) continue;
+					const validated = validateQuestionsObject(entry.questions);
+					if (!validated.ok) continue;
+					const state =
+						typeof entry.state === 'string' && entry.state.trim()
+							? entry.state.trim()
+							: presets[key].state;
+					loaded[key] = {
+						state,
+						questions: validated.questions,
+						rawQuestions: cloneQuestions(entry.questions),
+					};
+				}
+			} catch {
+				// Ignore localStorage access or parse errors in private/restricted browsing.
+			}
+			return loaded;
+		}
+
+		function persistOverrides() {
+			try {
+				const keys = Object.keys(customOverrides);
+				if (keys.length === 0) {
+					window.localStorage.removeItem(storageKey);
+					return;
+				}
+				const serialized = {};
+				for (const key of keys) {
+					const item = customOverrides[key];
+					if (!item) continue;
+					serialized[key] = {
+						state: item.state,
+						questions: item.rawQuestions || item.questions,
+					};
+				}
+				window.localStorage.setItem(storageKey, JSON.stringify(serialized));
+			} catch {
+				// Ignore storage quota or security errors.
+			}
+		}
+
+		function hasCustomOverride(presetKey = selectedPreset) {
+			return Boolean(customOverrides[presetKey]);
+		}
+
+		function setEditorFeedback(message, tone = 'error') {
+			if (!refs.editorFeedback) return;
+			if (!message) {
+				refs.editorFeedback.hidden = true;
+				refs.editorFeedback.textContent = '';
+				delete refs.editorFeedback.dataset.tone;
+				return;
+			}
+			refs.editorFeedback.hidden = false;
+			refs.editorFeedback.dataset.tone = tone;
+			refs.editorFeedback.textContent = message;
+		}
+
+		function syncEditorInputs() {
+			const basePreset = presets[selectedPreset] || presets[defaultPresetKey];
+			const override = customOverrides[selectedPreset];
+			const stateValue = override ? override.state : basePreset.state;
+			const questionsSource = override
+				? override.rawQuestions || override.questions
+				: basePreset.questions;
+			refs.editorState.value = stateValue;
+			refs.editorQuestions.value = JSON.stringify(questionsSource, null, 2);
+		}
+
+		function toggleEditor(forceOpen) {
+			editorOpen = typeof forceOpen === 'boolean' ? forceOpen : !editorOpen;
+			refs.editorPanel.hidden = !editorOpen;
+			refs.editorToggle.classList.toggle('active', editorOpen);
+			refs.editorToggle.setAttribute('aria-expanded', editorOpen ? 'true' : 'false');
+			if (editorOpen) {
+				syncEditorInputs();
+				setEditorFeedback('');
+				refs.editorQuestions.focus();
+			}
+		}
+
+		function formatEditorJson() {
+			let parsed;
+			try {
+				parsed = JSON.parse(refs.editorQuestions.value);
+			} catch (error) {
+				setEditorFeedback(
+					`Invalid JSON: ${error && error.message ? error.message : 'Unable to parse questions JSON.'}`,
+					'error'
+				);
+				return false;
+			}
+
+			const validated = validateQuestionsObject(parsed);
+			if (!validated.ok) {
+				setEditorFeedback(validated.error, 'error');
+				return false;
+			}
+
+			refs.editorQuestions.value = JSON.stringify(parsed, null, 2);
+			setEditorFeedback('Formatted valid question schema.', 'success');
+			return true;
+		}
+
+		function applyEditorChanges() {
+			let parsed;
+			try {
+				parsed = JSON.parse(refs.editorQuestions.value);
+			} catch (error) {
+				setEditorFeedback(
+					`Invalid JSON: ${error && error.message ? error.message : 'Unable to parse questions JSON.'}`,
+					'error'
+				);
+				return;
+			}
+
+			const validated = validateQuestionsObject(parsed);
+			if (!validated.ok) {
+				setEditorFeedback(validated.error, 'error');
+				return;
+			}
+
+			const basePreset = presets[selectedPreset] || presets[defaultPresetKey];
+			const nextState = refs.editorState.value.trim() || basePreset.state;
+			refs.editorState.value = nextState;
+			refs.editorQuestions.value = JSON.stringify(parsed, null, 2);
+
+			customOverrides[selectedPreset] = {
+				state: nextState,
+				questions: validated.questions,
+				rawQuestions: cloneQuestions(parsed),
+			};
+			persistOverrides();
+
+			clearError();
+			lastAnswers = null;
+			recentTimestamps.length = 0;
+			renderDecisionCards(null);
+			setEditorFeedback(
+				`Applied ${Object.keys(validated.questions).length} custom question(s) and saved to browser storage.`,
+				'success'
+			);
+
+			if (stream) {
+				if (inFlight) {
+					inFlight.abort();
+					inFlight = null;
+				}
+				captureAndDecide();
+			}
+		}
+
+		function resetEditorToPreset() {
+			delete customOverrides[selectedPreset];
+			persistOverrides();
+			syncEditorInputs();
+			clearError();
+			lastAnswers = null;
+			recentTimestamps.length = 0;
+			renderDecisionCards(null);
+			setEditorFeedback(`Reset to ${presets[selectedPreset].label} preset defaults.`, 'info');
+
+			if (stream) {
+				if (inFlight) {
+					inFlight.abort();
+					inFlight = null;
+				}
+				captureAndDecide();
+			}
+		}
+
+		function setStatus(text, state) {
+			refs.statusText.textContent = text;
+			root.dataset.status = state;
+		}
+
+		function setError(message) {
+			refs.errorPanel.hidden = false;
+			refs.errorPanel.textContent = message;
+			setStatus('Error', 'error');
+		}
+
+		function clearError() {
+			refs.errorPanel.hidden = true;
+			refs.errorPanel.textContent = '';
+		}
+
+		function prettyLabel(key) {
+			return String(key || '').replace(/[_-]+/g, ' ').trim();
+		}
+
+		function formatPercent(probability) {
+			const p = clamp(Number(probability) || 0, 0, 1);
+			const pct = p * 100;
+			if (pct > 0 && pct < 1) return `${pct.toFixed(1)}%`;
+			if (pct > 99 && pct < 100) return `${pct.toFixed(1)}%`;
+			return `${Math.round(pct)}%`;
+		}
+
+		function getActivePreset() {
+			const basePreset = presets[selectedPreset] || presets[defaultPresetKey];
+			const override = customOverrides[selectedPreset];
+			if (!override) return basePreset;
+			return {
+				label: `${basePreset.label} (Custom)`,
+				state: override.state,
+				questions: override.questions,
+				hero: basePreset.hero,
+			};
+		}
+
+		const emojiPrefix = /^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s+(.*)$/u;
+
+		/** Split a leading emoji off an option description: "😂 laughing" → ["😂", "laughing"]. */
+		function splitEmoji(text) {
+			const match = emojiPrefix.exec(String(text || ''));
+			return match ? [match[1], match[2]] : [null, String(text || '')];
+		}
+
+		/** Winning option of a choice answer, with its probability; null when there is none. */
+		function topOption(answer) {
+			const probs = answer && answer.probabilities ? answer.probabilities : {};
+			const ranked = Object.entries(probs).sort((a, b) => b[1] - a[1]);
+			const key = (answer && answer.choice) || (ranked[0] && ranked[0][0]);
+			return key ? { key, p: probs[key] ?? 0, ranked } : null;
+		}
+
+		/**
+		 * The hero's winning option, or null when the gate or the minimum pick
+		 * says there is nothing to show. Shared by the hero and the card filter.
+		 */
+		function heroPick(preset, answers) {
+			const hero = preset.hero;
+			if (!hero || !answers) return null;
+			const gate = hero.gate ? answers[hero.gate] : null;
+			if (gate && typeof gate.noul === 'number' && gate.noul < (hero.gateMin ?? 0.5)) return null;
+			const top = topOption(answers[hero.question]);
+			if (!top || top.p < (hero.minPick ?? 0) || (hero.hideOptions || []).includes(top.key)) return null;
+			return top;
+		}
+
+		/** One checklist line from another question's answer; null when it should not show. */
+		function renderCheck(check, preset, answers) {
+			const question = preset.questions[check.id];
+			const answer = answers[check.id];
+			if (!question || !answer) return null;
+			const required = check.requires ? answers[check.requires] : null;
+			const skipped = required && typeof required.noul === 'number' && required.noul < 0.5;
+			let ok;
+			let detail = '';
+			if (question.type === 'noul' && typeof answer.noul === 'number') {
+				const yes = answer.noul >= 0.5;
+				ok = check.invert ? !yes : yes;
+				detail = formatPercent(yes ? answer.noul : 1 - answer.noul);
+			} else {
+				const top = topOption(answer);
+				if (!top) return null;
+				if ((check.skip || []).includes(top.key)) return { ...check, mark: '—', detail: '' };
+				ok = (check.pass || []).includes(top.key);
+				detail = `${ok ? '' : `${prettyLabel(top.key)} `}${formatPercent(top.p)}`;
+			}
+			if (skipped) return { ...check, mark: '—', detail: '' };
+			if (check.info) return { ...check, mark: ok ? 'yes' : 'no', detail };
+			if (ok && check.hideWhenPass) return null;
+			return { ...check, mark: check.invert ? (ok ? '✅' : '❗') : ok ? '✅' : '❌', detail };
+		}
+
+		function renderHeroExtras(preset, answers) {
+			const hero = preset.hero;
+			const lines = answers && hero && hero.checks
+				? hero.checks.map((c) => renderCheck(c, preset, answers)).filter(Boolean)
+				: [];
+			refs.heroChecks.hidden = lines.length === 0;
+			refs.heroChecks.innerHTML = lines
+				.map(
+					(l) =>
+						`<li><span>${escapeHtml(l.icon)} ${escapeHtml(l.label)}</span><strong>${escapeHtml(l.mark)}</strong><em>${escapeHtml(l.detail)}</em></li>`
+				)
+				.join('');
+			refs.heroNote.hidden = !(hero && hero.note);
+			refs.heroNote.textContent = (hero && hero.note) || '';
+		}
+
+		function renderHero(preset, answers) {
+			const hero = preset.hero;
+			const question = hero && preset.questions ? preset.questions[hero.question] : null;
+			refs.heroParts.hidden = true;
+			refs.heroParts.innerHTML = '';
+			if (!hero || !question || (question.type !== 'choice' && question.type !== 'score')) {
+				refs.hero.hidden = true;
+				refs.heroChecks.hidden = true;
+				refs.heroNote.hidden = true;
+				return;
+			}
+			refs.hero.hidden = false;
+			renderHeroExtras(preset, answers);
+			if (!answers) {
+				refs.heroSymbol.textContent = '…';
+				refs.heroLabel.textContent = 'Waiting for a frame';
+				refs.heroMeta.textContent = '';
+				return;
+			}
+			const top = heroPick(preset, answers);
+			if (!top) {
+				refs.heroSymbol.textContent = '🫥';
+				refs.heroLabel.textContent = hero.gateMessage;
+				refs.heroMeta.textContent = '';
+				return;
+			}
+			const [symbol, looks] = splitEmoji(question.criteria[top.key]);
+			refs.heroLabel.textContent = looks || prettyLabel(top.key);
+			const parts = hero.parts ? hero.parts[top.key] || [] : null;
+
+			// Rating levels ("🟠 Violation: someone is missing…"): title, then the description.
+			if (question.type === 'score') {
+				const [title, ...rest] = String(looks).split(':');
+				refs.heroSymbol.textContent = symbol || String(Number(top.key));
+				refs.heroLabel.textContent = title.trim();
+				refs.heroMeta.textContent = `${rest.join(':').trim()} · ${formatPercent(top.p)} sure`;
+				return;
+			}
+
+			if (!parts) {
+				refs.heroSymbol.textContent = symbol || prettyLabel(top.key);
+				const runners = top.ranked
+					.filter(([k]) => k !== top.key)
+					.slice(0, 3)
+					.map(([k, p]) => `${splitEmoji(question.criteria[k])[0] || prettyLabel(k)} ${formatPercent(p)}`);
+				refs.heroMeta.textContent = [`${formatPercent(top.p)} sure`, ...runners].join(' · ');
+				return;
+			}
+
+			// Parts: each part's bin, from a question (with its probability) or a fixed rule.
+			const sorted = parts.map((part) => {
+				if (part.fixed) {
+					const [partSymbol, partLabel] = splitEmoji(part.fixed);
+					return { part, partSymbol, short: String(partLabel).split(/[:,]/)[0].trim(), note: 'rule' };
+				}
+				const partQuestion = preset.questions[part.id];
+				const partTop = topOption(answers[part.id]);
+				const [partSymbol, partLabel] = partTop && partQuestion
+					? splitEmoji(partQuestion.criteria[partTop.key])
+					: [null, '—'];
+				return {
+					part,
+					partSymbol,
+					short: String(partLabel).split(/[:,]/)[0].trim(),
+					note: partTop ? formatPercent(partTop.p) : '-',
+				};
+			});
+			const symbols = [...new Set(sorted.map((s) => s.partSymbol).filter(Boolean))];
+			refs.heroSymbol.textContent = symbols.join('') || symbol || '?';
+			refs.heroMeta.textContent = `${symbol ? `${symbol} ` : ''}${formatPercent(top.p)} sure it’s this`;
+			refs.heroParts.hidden = false;
+			refs.heroParts.innerHTML = sorted
+				.map(
+					(s) => `<li><span>${escapeHtml(prettyLabel(s.part.label))}</span><strong>${escapeHtml(
+						`${s.partSymbol || ''} ${s.short}`
+					)}</strong><em>${escapeHtml(s.note)}</em></li>`
+				)
+				.join('');
+		}
+
+
+		function renderDecisionCards(answers) {
+			const preset = getActivePreset();
+			const questions = preset.questions || {};
+			const entries = Object.entries(questions);
+			refs.presetTitle.textContent = preset.label;
+			refs.stateContext.textContent = `State: ${preset.state}`;
+			refs.stateContext.title = preset.state;
+			refs.questionsCount.textContent = String(entries.length);
+			renderHero(preset, answers);
+
+			// With per-option parts (Which Bin?), show only the gate, the pick, and the picked item's parts.
+			let visible = entries;
+			const hero = preset.hero;
+			if (hero && hero.parts) {
+				const pick = heroPick(preset, answers);
+				const keep = new Set([
+					hero.gate,
+					hero.question,
+					...((pick && hero.parts[pick.key]) || []).filter((p) => p.id).map((p) => p.id),
+				]);
+				visible = entries.filter(([id]) => keep.has(id));
+			}
+
+			refs.decisionCards.innerHTML = visible
+				.map(([id, question]) => {
+					const answer = answers && typeof answers === 'object' ? answers[id] : null;
+					if (question.type === 'noul') {
+						return renderNoulCard(id, question, answer);
+					}
+					if (question.type === 'choice') {
+						return renderChoiceCard(id, question, answer);
+					}
+					return renderScoreCard(id, question, answer);
+				})
+				.join('');
+		}
+
+		function renderNoulCard(id, question, answer) {
+			const hasAnswer = answer && typeof answer.noul === 'number' && Number.isFinite(answer.noul);
+			const probYes = hasAnswer ? clamp(answer.noul, 0, 1) : 0;
+			const isYes = hasAnswer && probYes >= 0.5;
+			const badgeText = !hasAnswer ? 'Waiting' : isYes ? 'Yes' : 'No';
+			const badgeClass = !hasAnswer ? 'neutral' : isYes ? 'yes' : 'no';
+			const pctText = hasAnswer ? formatPercent(probYes) : '-';
+			const widthPct = hasAnswer ? (probYes * 100).toFixed(1) : '0';
+
+			return `
+				<article class="decision-card" data-question-id="${escapeHtml(id)}" data-question-type="noul">
+					<div class="card-top">
+						<div>
+							<span class="question-id">${escapeHtml(id)}</span>
+							<h4>${escapeHtml(question.instructions)}</h4>
+						</div>
+						<span class="type-pill">noul</span>
+					</div>
+					<div class="verdict-row">
+						<span class="verdict-badge ${badgeClass}" data-noul-badge>${badgeText}</span>
+						<span class="confidence-label" data-noul-probability>P(yes) ${pctText}</span>
+					</div>
+					<div class="prob-rows">
+						<div class="prob-row ${hasAnswer && isYes ? 'winner' : ''}">
+							<span class="opt-label">yes</span>
+							<div class="prob-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(probYes * 100)}">
+								<div class="prob-fill" style="width: ${widthPct}%"></div>
+							</div>
+							<span class="opt-pct">${pctText}</span>
+						</div>
+					</div>
+				</article>
+			`;
+		}
+
+		function renderChoiceCard(id, question, answer) {
+			const criteria = question.criteria || {};
+			const probs = answer && answer.probabilities && typeof answer.probabilities === 'object' ? answer.probabilities : null;
+			const winningChoice = answer && typeof answer.choice === 'string' ? answer.choice : null;
+			const confidence =
+				answer && typeof answer.confidence === 'number' && Number.isFinite(answer.confidence)
+					? formatPercent(answer.confidence)
+					: null;
+
+			const options = Object.keys(criteria).map((key) => {
+				const symbol = splitEmoji(criteria[key])[0];
+				return {
+					key,
+					label: symbol ? `${symbol} ${prettyLabel(key)}` : prettyLabel(key),
+					detail: criteria[key] ? String(criteria[key]) : '',
+					prob: probs && typeof probs[key] === 'number' ? clamp(probs[key], 0, 1) : 0,
+				};
+			});
+
+			if (probs) {
+				options.sort((a, b) => b.prob - a.prob);
+			}
+
+			const topKey = winningChoice || (probs && options.length ? options[0].key : null);
+			const topOption = topKey ? options.find((opt) => opt.key === topKey) : null;
+			const badgeText = topOption ? topOption.label : topKey ? prettyLabel(topKey) : 'Waiting';
+			const badgeClass = topKey ? 'winner-badge' : 'neutral';
+
+			// Large option sets (e.g. 70 emoji) show only the leading rows.
+			const maxRows = 8;
+			const hiddenCount = options.length > maxRows + 2 ? options.length - maxRows : 0;
+			const visible = hiddenCount ? options.slice(0, maxRows) : options;
+
+			const rowsHtml = visible
+				.map((opt) => {
+					const isWinner = Boolean(topKey && opt.key === topKey && probs);
+					const pctText = probs ? formatPercent(opt.prob) : '-';
+					const widthPct = probs ? (opt.prob * 100).toFixed(1) : '0';
+					return `
+						<div class="prob-row ${isWinner ? 'winner' : ''}" data-option-key="${escapeHtml(opt.key)}">
+							<span class="opt-label" title="${escapeHtml(opt.detail || opt.label)}">${escapeHtml(opt.label)}</span>
+							<div class="prob-track">
+								<div class="prob-fill" style="width: ${widthPct}%"></div>
+							</div>
+							<span class="opt-pct">${pctText}</span>
+						</div>
+					`;
+				})
+				.join('') + (hiddenCount ? `<p class="more-options">+${hiddenCount} more options</p>` : '');
+
+			return `
+				<article class="decision-card" data-question-id="${escapeHtml(id)}" data-question-type="choice">
+					<div class="card-top">
+						<div>
+							<span class="question-id">${escapeHtml(id)}</span>
+							<h4>${escapeHtml(question.instructions)}</h4>
+						</div>
+						<span class="type-pill">choice</span>
+					</div>
+					<div class="verdict-row">
+						<span class="verdict-badge ${badgeClass}" data-choice-winner>${escapeHtml(badgeText)}</span>
+						<span class="confidence-label" data-choice-confidence>${confidence ? `Confidence ${confidence}` : 'Awaiting frame'}</span>
+					</div>
+					<div class="prob-rows">${rowsHtml}</div>
+				</article>
+			`;
+		}
+
+		function renderScoreCard(id, question, answer) {
+			const criteria = Array.isArray(question.criteria) ? question.criteria : [];
+			const maxLevel = Math.max(1, criteria.length - 1);
+			const hasScore = answer && typeof answer.score === 'number' && Number.isFinite(answer.score);
+			const probs = answer && answer.probabilities && typeof answer.probabilities === 'object' ? answer.probabilities : null;
+			const legend = answer && answer.legend && typeof answer.legend === 'object' ? answer.legend : null;
+			const confidence =
+				answer && typeof answer.confidence === 'number' && Number.isFinite(answer.confidence)
+					? formatPercent(answer.confidence)
+					: null;
+
+			let activeIndex = 0;
+			if (probs) {
+				let bestProb = -1;
+				for (let i = 0; i < criteria.length; i += 1) {
+					const p = Number(probs[String(i)] ?? 0);
+					if (p > bestProb) {
+						bestProb = p;
+						activeIndex = i;
+					}
+				}
+			} else if (hasScore) {
+				activeIndex = clamp(Math.round(answer.score), 0, maxLevel);
+			}
+
+			const legendLabel =
+				(legend && typeof legend[String(activeIndex)] === 'string' && legend[String(activeIndex)]) ||
+				criteria[activeIndex] ||
+				'';
+			const scoreBadge = hasScore ? `${answer.score.toFixed(2)} / ${maxLevel}` : 'Waiting';
+
+			const rowsHtml = criteria
+				.map((levelText, index) => {
+					const key = String(index);
+					const label = (legend && typeof legend[key] === 'string' && legend[key]) || levelText;
+					const prob = probs && typeof probs[key] === 'number' ? clamp(probs[key], 0, 1) : 0;
+					const isWinner = Boolean((probs || hasScore) && index === activeIndex);
+					const pctText = probs ? formatPercent(prob) : '-';
+					const widthPct = probs ? (prob * 100).toFixed(1) : '0';
+					return `
+						<div class="prob-row ${isWinner ? 'winner' : ''}" data-score-level="${index}">
+							<span class="opt-label" title="${escapeHtml(label)}">L${index} · ${escapeHtml(label)}</span>
+							<div class="prob-track">
+								<div class="prob-fill" style="width: ${widthPct}%"></div>
+							</div>
+							<span class="opt-pct">${pctText}</span>
+						</div>
+					`;
+				})
+				.join('');
+
+			return `
+				<article class="decision-card" data-question-id="${escapeHtml(id)}" data-question-type="score">
+					<div class="card-top">
+						<div>
+							<span class="question-id">${escapeHtml(id)}</span>
+							<h4>${escapeHtml(question.instructions)}</h4>
+						</div>
+						<span class="type-pill">score</span>
+					</div>
+					<div class="verdict-row">
+						<span class="verdict-badge ${hasScore ? 'score-badge' : 'neutral'}" data-score-value>${escapeHtml(scoreBadge)}</span>
+						<span class="confidence-label" data-score-confidence>${confidence ? `Confidence ${confidence}` : 'Awaiting frame'}</span>
+					</div>
+					${hasScore && legendLabel ? `<p class="score-legend" data-score-legend>${escapeHtml(legendLabel)}</p>` : ''}
+					<div class="prob-rows">${rowsHtml}</div>
+				</article>
+			`;
+		}
+
+		function startPolling() {
+			if (intervalId) return;
+			captureAndDecide();
+			intervalId = window.setInterval(captureAndDecide, sampleMs);
+		}
+
+		function stopPolling() {
+			if (intervalId) {
+				window.clearInterval(intervalId);
+				intervalId = null;
+			}
+			if (inFlight) {
+				inFlight.abort();
+				inFlight = null;
+			}
+		}
+
+		async function listVideoInputs() {
+			if (!navigator.mediaDevices?.enumerateDevices) return [];
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			const inputs = [];
+			for (const device of devices) {
+				if (device.kind !== 'videoinput' || !device.deviceId) continue;
+				if (inputs.some((item) => item.deviceId === device.deviceId)) continue;
+				inputs.push(device);
+			}
+			return inputs;
+		}
+
+		function activeVideoDeviceId() {
+			const track = stream?.getVideoTracks?.()[0];
+			return track?.getSettings?.().deviceId || preferredDeviceId;
+		}
+
+		function setSwitchCameraLabel(inputs) {
+			const current = inputs.find((device) => device.deviceId === activeVideoDeviceId());
+			const label = current?.label?.trim();
+			refs.switchButton.title = label ? `Switch camera (current: ${label})` : 'Switch camera';
+		}
+
+		async function openCameraStream() {
+			const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+			const attempts = [];
+			if (preferredDeviceId) {
+				attempts.push({ ...size, deviceId: { exact: preferredDeviceId } });
+				attempts.push({ deviceId: { exact: preferredDeviceId } });
+			}
+			attempts.push({ ...size, facingMode });
+
+			let lastError = null;
+			for (const video of attempts) {
+				try {
+					return await navigator.mediaDevices.getUserMedia({ audio: false, video });
+				} catch (error) {
+					lastError = error;
+					if (error?.name === 'NotAllowedError') throw error;
+				}
+			}
+			throw lastError;
+		}
+
+		async function startCamera() {
+			clearError();
+			if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+				setError('This browser does not expose getUserMedia. Try a current desktop or mobile browser.');
+				return;
+			}
+			if (!window.isSecureContext && location.hostname !== 'localhost') {
+				setError('Camera capture requires HTTPS. Deploy to workers.dev or run on localhost.');
+				return;
+			}
+
+			setStatus('Requesting camera', 'pending');
+			refs.startButton.disabled = true;
+
+			try {
+				stream = await openCameraStream();
+				preferredDeviceId = activeVideoDeviceId() || preferredDeviceId;
+
+				refs.video.srcObject = stream;
+				await refs.video.play();
+				refs.buffer.width = captureWidth;
+				refs.buffer.height = captureHeight;
+				refs.empty.hidden = true;
+				refs.pauseButton.disabled = false;
+				refs.switchButton.disabled = false;
+				setSwitchCameraLabel(await listVideoInputs());
+				setStatus('Streaming decisions', 'streaming');
+				startPolling();
+			} catch (error) {
+				refs.startButton.disabled = false;
+				if (error && error.name === 'NotAllowedError') {
+					setError('Camera permission was denied. Allow camera access and try again.');
+					return;
+				}
+				setError('Could not start the camera on this device.');
+			}
+		}
+
+		function stopCamera() {
+			stopPolling();
+			if (stream) {
+				for (const track of stream.getTracks()) track.stop();
+				stream = null;
+			}
+			refs.video.srcObject = null;
+			refs.empty.hidden = false;
+			refs.startButton.disabled = false;
+			refs.pauseButton.disabled = true;
+			refs.switchButton.disabled = true;
+			setStatus('Paused', 'idle');
+		}
+
+		async function switchCamera() {
+			let inputs = [];
+			try {
+				inputs = await listVideoInputs();
+			} catch {
+				inputs = [];
+			}
+			if (inputs.length > 1) {
+				const currentIndex = inputs.findIndex((device) => device.deviceId === activeVideoDeviceId());
+				const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % inputs.length : 1;
+				preferredDeviceId = inputs[nextIndex].deviceId;
+			} else {
+				facingMode = facingMode === 'user' ? 'environment' : 'user';
+				preferredDeviceId = null;
+			}
+			stopCamera();
+			await startCamera();
+		}
+
+		async function captureAndDecide() {
+			if (!stream || inFlight || refs.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+			refs.buffer.width = captureWidth;
+			refs.buffer.height = captureHeight;
+			bufferContext.drawImage(refs.video, 0, 0, captureWidth, captureHeight);
+
+			const useCustomPayload = hasCustomOverride(selectedPreset);
+			let fetchUrl = `/api/decide?preset=${encodeURIComponent(selectedPreset)}`;
+			let fetchHeaders = { 'content-type': 'image/jpeg' };
+			let fetchBody = null;
+
+			if (useCustomPayload) {
+				const dataUrl = refs.buffer.toDataURL('image/jpeg', 0.7);
+				if (!dataUrl || dataUrl === 'data:,') return;
+				const active = getActivePreset();
+				fetchUrl = '/api/decide';
+				fetchHeaders = { 'content-type': 'application/json' };
+				fetchBody = JSON.stringify({
+					image: dataUrl,
+					preset: selectedPreset,
+					state: active.state,
+					questions: active.questions,
+				});
+			} else {
+				const blob = await new Promise((resolve) => refs.buffer.toBlob(resolve, 'image/jpeg', 0.7));
+				if (!blob) return;
+				fetchBody = blob;
+			}
+
+			const controller = new AbortController();
+			inFlight = controller;
+			setStatus('Evaluating', 'detecting');
+			const started = performance.now();
+
+			try {
+				const response = await fetch(fetchUrl, {
+					method: 'POST',
+					body: fetchBody,
+					headers: fetchHeaders,
+					signal: controller.signal,
+				});
+
+				const payload = await response.json().catch(() => ({}));
+				if (!response.ok) {
+					throw new Error(payload.error || `Decision request failed with ${response.status}`);
+				}
+
+				const roundTripMs = performance.now() - started;
+				lastAnswers = payload.answers || {};
+				renderDecisionCards(lastAnswers);
+				updateStats(roundTripMs, payload);
+				triggerPulse();
+				setStatus('Streaming decisions', 'streaming');
+			} catch (error) {
+				if (error && error.name === 'AbortError') return;
+				setError(error && error.message ? error.message : 'Decision request failed.');
+				stopPolling();
+			} finally {
+				if (inFlight === controller) inFlight = null;
+			}
+		}
+
+		function updateStats(roundTripMs, payload) {
+			refs.latency.textContent = `${Math.round(roundTripMs)} ms`;
+			refs.inference.textContent = Number.isFinite(payload.inferenceMs)
+				? `${Math.round(payload.inferenceMs)} ms`
+				: '-';
+
+			const questionCount = Object.keys(getActivePreset().questions || {}).length;
+			refs.questionsCount.textContent = String(questionCount);
+
+			const now = performance.now();
+			recentTimestamps.push({ time: now, questions: questionCount });
+			while (recentTimestamps.length > 1 && now - recentTimestamps[0].time > 5000) {
+				recentTimestamps.shift();
+			}
+			if (recentTimestamps.length > 1) {
+				const elapsedSec = (now - recentTimestamps[0].time) / 1000;
+				const totalQuestions = recentTimestamps
+					.slice(1)
+					.reduce((sum, item) => sum + item.questions, 0);
+				refs.dps.textContent = elapsedSec > 0 ? (totalQuestions / elapsedSec).toFixed(1) : '-';
+			} else if (roundTripMs > 0) {
+				refs.dps.textContent = ((questionCount * 1000) / roundTripMs).toFixed(1);
+			}
+
+			const inputTokens = payload.usage && Number.isFinite(payload.usage.input_tokens)
+				? payload.usage.input_tokens
+				: null;
+			refs.tokens.textContent = inputTokens !== null ? String(inputTokens) : '-';
+			refs.bytes.textContent = Number.isFinite(payload.bytes)
+				? `${Math.round(payload.bytes / 1024)} KB`
+				: '-';
+		}
+
+		function triggerPulse() {
+			if (!refs.pulse) return;
+			refs.pulse.classList.add('active');
+			window.setTimeout(() => {
+				refs.pulse.classList.remove('active');
+			}, 140);
+		}
+
+		function setPreset(presetKey) {
+			if (!presets[presetKey]) return;
+			selectedPreset = presetKey;
+			lastAnswers = null;
+			recentTimestamps.length = 0;
+			refs.presetButtons.forEach((button) => {
+				button.classList.toggle('active', button.dataset.preset === presetKey);
+			});
+			if (editorOpen) {
+				syncEditorInputs();
+				setEditorFeedback('');
+			}
+			renderDecisionCards(null);
+			if (stream) {
+				if (inFlight) {
+					inFlight.abort();
+					inFlight = null;
+				}
+				captureAndDecide();
+			}
+		}
+
+		function clamp(value, min, max) {
+			return Math.min(Math.max(value, min), max);
+		}
+
+		function escapeHtml(value) {
+			return String(value).replace(/[&<>"]/g, (char) => {
+				const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+				return entities[char];
+			});
+		}
+
+		refs.startButton.addEventListener('click', startCamera);
+		refs.pauseButton.addEventListener('click', stopCamera);
+		refs.switchButton.addEventListener('click', switchCamera);
+		refs.presetButtons.forEach((button) => {
+			button.addEventListener('click', () => setPreset(button.dataset.preset));
+		});
+		refs.editorToggle.addEventListener('click', () => toggleEditor());
+		refs.editorApply.addEventListener('click', applyEditorChanges);
+		refs.editorFormat.addEventListener('click', formatEditorJson);
+		refs.editorReset.addEventListener('click', resetEditorToPreset);
+
+		function isEditableTarget(target) {
+			if (!target || !(target instanceof HTMLElement)) return false;
+			const tagName = target.tagName;
+			return (
+				tagName === 'INPUT' ||
+				tagName === 'TEXTAREA' ||
+				tagName === 'SELECT' ||
+				target.isContentEditable
+			);
+		}
+
+		document.addEventListener('keydown', (event) => {
+			if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+			if (isEditableTarget(event.target)) return;
+			if (event.key === 'e' || event.key === 'E') {
+				event.preventDefault();
+				toggleEditor();
+			}
+		});
+
+		document.addEventListener('visibilitychange', () => {
+			if (document.hidden) stopPolling();
+			else if (stream) startPolling();
+		});
+
+		window.addEventListener('beforeunload', stopCamera);
+		syncEditorInputs();
+		renderDecisionCards(null);
+	})();
+</script>
+
+<style>
+	.demo-section {
+		padding-block: 28px 42px;
+	}
+
+	.demo-card {
+		padding: 18px;
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-stack);
+		animation: fade-slide-up 650ms var(--ease-entrance) 120ms both;
+	}
+
+	.demo-header,
+	.preset-bar,
+	.question-editor,
+	.demo-grid,
+	.stats-grid {
+		position: relative;
+		z-index: 1;
+	}
+
+	.demo-header {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		padding: 6px 6px 18px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.eyebrow {
+		margin: 0 0 6px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		letter-spacing: 0.05em;
+		color: var(--cf-orange);
+		text-transform: uppercase;
+	}
+
+	h2,
+	h3,
+	h4 {
+		margin: 0;
+		font-weight: 500;
+		letter-spacing: -0.035em;
+	}
+
+	h2 {
+		font-size: clamp(1.75rem, 4vw, 2.5rem);
+		line-height: 1;
+	}
+
+	h3 {
+		font-size: 20px;
+	}
+
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		align-self: flex-start;
+		gap: 8px;
+		padding: 8px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.status-dot {
+		width: 8px;
+		height: 8px;
+		background: var(--cf-text-subtle);
+		border-radius: 999px;
+	}
+
+	.demo-card[data-status='pending'] .status-dot,
+	.demo-card[data-status='detecting'] .status-dot {
+		background: var(--cf-warning);
+		animation: pulse-soft 1s ease-in-out infinite;
+	}
+
+	.demo-card[data-status='streaming'] .status-dot {
+		background: var(--cf-success);
+	}
+
+	.demo-card[data-status='error'] .status-dot {
+		background: var(--cf-error);
+	}
+
+	.preset-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-top: 18px;
+	}
+
+	.preset-selector {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		padding: 5px;
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.selector-label {
+		padding: 0 8px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text-muted);
+	}
+
+	.preset-button {
+		min-height: 36px;
+		padding: 8px 14px;
+		font-size: 13px;
+		color: var(--cf-text-muted);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--radius-full);
+	}
+
+	.preset-button:hover {
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+	}
+
+	.preset-button.active {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	.editor-toggle-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 38px;
+		padding: 8px 14px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text);
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.editor-toggle-button:hover {
+		background: var(--cf-bg-300);
+		border-color: var(--cf-orange);
+		border-style: dashed;
+	}
+
+	.editor-toggle-button.active {
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-color: var(--cf-orange);
+	}
+
+	.question-editor {
+		margin-top: 14px;
+		padding: 18px;
+		background: var(--cf-bg-100);
+		border: 1px dashed var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	.question-editor[hidden] {
+		display: none;
+	}
+
+	.editor-header {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.editor-hint {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	.editor-hint code {
+		padding: 2px 5px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-radius: var(--radius-sm);
+	}
+
+	.editor-fields {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin-top: 14px;
+	}
+
+	.editor-field {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.field-label {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		color: var(--cf-text-muted);
+		text-transform: uppercase;
+	}
+
+	.editor-input,
+	.editor-textarea {
+		width: 100%;
+		padding: 10px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--cf-text);
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-md);
+	}
+
+	.editor-textarea {
+		resize: vertical;
+		min-height: 180px;
+	}
+
+	.editor-input:focus,
+	.editor-textarea:focus {
+		outline: none;
+		border-color: var(--cf-orange);
+		box-shadow: var(--shadow-focus);
+	}
+
+	.editor-feedback {
+		margin-top: 12px;
+		padding: 10px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 1.45;
+		border-radius: var(--radius-md);
+	}
+
+	.editor-feedback[hidden] {
+		display: none;
+	}
+
+	.editor-feedback[data-tone='error'] {
+		color: var(--cf-error);
+		background: color-mix(in srgb, var(--cf-error) 9%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-error) 36%, transparent);
+	}
+
+	.editor-feedback[data-tone='success'] {
+		color: var(--cf-success);
+		background: color-mix(in srgb, var(--cf-success) 10%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-success) 32%, transparent);
+	}
+
+	.editor-feedback[data-tone='info'] {
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+	}
+
+	.editor-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 14px;
+	}
+
+	.editor-action {
+		min-height: 38px;
+		padding: 8px 14px;
+		font-size: 13px;
+	}
+
+	.demo-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 18px;
+		padding-block: 20px;
+	}
+
+	.video-panel {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.video-stage {
+		position: relative;
+		min-height: 260px;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		background:
+			linear-gradient(135deg, rgba(82, 16, 0, 0.08), transparent),
+			#1a1209;
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	#decide-camera-video,
+	.empty-state {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+	#decide-camera-video {
+		object-fit: cover;
+	}
+
+	.frame-pulse {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		border: 3px solid var(--cf-orange);
+		border-radius: var(--radius-xl);
+		opacity: 0;
+		transition: opacity 150ms var(--ease-out);
+	}
+
+	.frame-pulse.active {
+		opacity: 0.85;
+		transition: none;
+	}
+
+	.stage-tag {
+		position: absolute;
+		left: 14px;
+		bottom: 14px;
+		padding: 6px 10px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: rgba(255, 251, 245, 0.82);
+		background: rgba(18, 18, 18, 0.68);
+		border: 1px solid rgba(255, 251, 245, 0.14);
+		border-radius: var(--radius-md);
+		backdrop-filter: blur(6px);
+	}
+
+	.empty-state {
+		display: grid;
+		place-items: center;
+		padding: 24px;
+		color: #fffbf5;
+		text-align: center;
+		background-image: radial-gradient(circle, rgba(255, 251, 245, 0.16) 0.75px, transparent 0.75px);
+		background-size: 12px 12px;
+	}
+
+	.empty-state[hidden] {
+		display: none;
+	}
+
+	.empty-state p {
+		max-width: 440px;
+		margin: 14px 0 6px;
+		font-size: clamp(1.1rem, 3vw, 1.6rem);
+		line-height: 1.1;
+		letter-spacing: -0.035em;
+	}
+
+	.empty-state span {
+		max-width: 420px;
+		font-size: 14px;
+		line-height: 1.5;
+		color: rgba(255, 251, 245, 0.7);
+	}
+
+	.camera-icon {
+		display: grid;
+		width: 58px;
+		height: 58px;
+		place-items: center;
+		color: var(--cf-orange);
+		background: rgba(255, 72, 1, 0.12);
+		border: 1px solid rgba(255, 72, 1, 0.32);
+		border-radius: var(--radius-xl);
+	}
+
+	.camera-icon svg {
+		width: 28px;
+		height: 28px;
+		fill: currentColor;
+	}
+
+	.controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+
+	.control-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 44px;
+		padding: 11px 18px;
+		font-size: 14px;
+		font-weight: 500;
+		border: 1px solid transparent;
+		border-radius: var(--radius-full);
+	}
+
+	.control-button.primary {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	.control-button.primary:hover {
+		opacity: 0.95;
+		border-color: color-mix(in srgb, var(--cf-bg-100) 50%, transparent);
+		border-style: dashed;
+	}
+
+	.control-button.ghost {
+		color: var(--cf-orange);
+		background: transparent;
+		border-color: var(--cf-border);
+	}
+
+	.control-button.outline {
+		color: var(--cf-text);
+		background: var(--cf-bg-200);
+		border-color: var(--cf-border);
+	}
+
+	.control-button.ghost:hover,
+	.control-button.outline:hover {
+		background: var(--cf-bg-300);
+		border-color: var(--cf-orange);
+		border-style: dashed;
+	}
+
+	.error-panel {
+		padding: 12px 14px;
+		font-size: 14px;
+		line-height: 1.45;
+		color: var(--cf-error);
+		background: color-mix(in srgb, var(--cf-error) 9%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-error) 36%, transparent);
+		border-radius: var(--radius-lg);
+	}
+
+	.decisions-panel {
+		min-width: 0;
+		padding: 18px;
+		background: var(--cf-bg-100);
+		border: 1px dashed var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	.panel-heading {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding-bottom: 14px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.threshold {
+		display: inline-flex;
+		align-self: flex-start;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 5px 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-radius: var(--radius-full);
+	}
+
+	.state-context {
+		margin: 12px 0 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		line-height: 1.45;
+		color: var(--cf-text-muted);
+			display: -webkit-box;
+		-webkit-line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.decision-cards {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin-top: 14px;
+	}
+
+	:global(.decision-card) {
+		padding: 14px;
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border-light);
+		border-radius: var(--radius-lg);
+	}
+
+	:global(.card-top) {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	:global(.question-id) {
+		display: block;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.decision-card h4) {
+		margin: 3px 0 0;
+		font-size: 15px;
+		font-weight: 500;
+		line-height: 1.3;
+		color: var(--cf-text);
+	}
+
+	:global(.type-pill) {
+		padding: 3px 8px;
+		font-family: var(--font-mono);
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--cf-text-muted);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.verdict-row) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		margin-top: 10px;
+	}
+
+	:global(.verdict-badge) {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 10px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		font-weight: 500;
+		border-radius: var(--radius-full);
+	}
+
+	:global(.verdict-badge.yes),
+	:global(.verdict-badge.winner-badge),
+	:global(.verdict-badge.score-badge) {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	:global(.verdict-badge.no),
+	:global(.verdict-badge.neutral) {
+		color: var(--cf-text-muted);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+	}
+
+	:global(.confidence-label) {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.score-legend) {
+		margin: 8px 0 0;
+		font-size: 12px;
+		color: var(--cf-text);
+	}
+
+	:global(.prob-rows) {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin-top: 10px;
+	}
+
+	:global(.prob-row) {
+		display: grid;
+		grid-template-columns: minmax(90px, 1.1fr) minmax(80px, 1.5fr) 44px;
+		align-items: center;
+		gap: 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.prob-row.winner) {
+		color: var(--cf-text);
+		font-weight: 500;
+	}
+
+	:global(.opt-label) {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.prob-track) {
+		height: 8px;
+		overflow: hidden;
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border-light);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.prob-fill) {
+		height: 100%;
+		background: color-mix(in srgb, var(--cf-text-muted) 55%, transparent);
+		border-radius: var(--radius-full);
+		transition: width 200ms var(--ease-out);
+	}
+
+	:global(.prob-row.winner .prob-fill) {
+		background: var(--cf-orange);
+	}
+
+	:global(.opt-pct) {
+		text-align: right;
+	}
+
+	.hero-readout {
+		margin-top: 14px;
+		padding: 18px 14px;
+		text-align: center;
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-orange);
+		border-radius: var(--radius-lg);
+	}
+
+	.hero-readout[hidden] {
+		display: none;
+	}
+
+	.hero-symbol {
+		margin: 0;
+		font-size: clamp(5rem, 12vw, 8rem);
+		line-height: 1;
+	}
+
+	.hero-label {
+		margin: 10px 0 0;
+		font-size: 20px;
+		font-weight: 500;
+		letter-spacing: -0.02em;
+		color: var(--cf-text);
+	}
+
+	.hero-label::first-letter {
+		text-transform: uppercase;
+	}
+
+	.hero-meta {
+		margin: 6px 0 0;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text-muted);
+	}
+
+	.hero-checks {
+		display: grid;
+		gap: 6px;
+		margin: 14px 0 0;
+		padding: 0;
+		list-style: none;
+		text-align: left;
+	}
+
+	.hero-checks[hidden],
+	.hero-note[hidden] {
+		display: none;
+	}
+
+	.hero-checks :global(li) {
+		display: grid;
+		grid-template-columns: 1fr auto minmax(44px, auto);
+		align-items: center;
+		gap: 10px;
+		padding-top: 6px;
+		font-size: 15px;
+		border-top: 1px solid var(--cf-border-light);
+	}
+
+	.hero-checks :global(li span) {
+		color: var(--cf-text);
+	}
+
+	.hero-checks :global(li em) {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		font-style: normal;
+		text-align: right;
+		color: var(--cf-text-muted);
+	}
+
+	.hero-note {
+		margin: 12px 0 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	.hero-parts {
+		display: grid;
+		gap: 6px;
+		margin: 14px 0 0;
+		padding: 0;
+		list-style: none;
+		text-align: left;
+	}
+
+	.hero-parts[hidden] {
+		display: none;
+	}
+
+	.hero-parts :global(li) {
+		display: grid;
+		grid-template-columns: 1fr auto 44px;
+		align-items: center;
+		gap: 10px;
+		padding-top: 6px;
+		font-size: 15px;
+		border-top: 1px solid var(--cf-border-light);
+	}
+
+	.hero-parts :global(li span) {
+		font-family: var(--font-mono);
+		font-size: 12px;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--cf-text-muted);
+	}
+
+	.hero-parts :global(li strong) {
+		font-weight: 500;
+		color: var(--cf-text);
+	}
+
+	.hero-parts :global(li em) {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		font-style: normal;
+		text-align: right;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.more-options) {
+		margin: 2px 0 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	.stats-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 10px;
+		padding-top: 18px;
+		border-top: 1px solid var(--cf-border-light);
+	}
+
+	.stat-card {
+		padding: 14px;
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-lg);
+	}
+
+	.stat-card span {
+		display: block;
+		margin-bottom: 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		color: var(--cf-text-muted);
+		text-transform: uppercase;
+	}
+
+	.stat-card strong {
+		display: block;
+		font-size: 24px;
+		font-weight: 500;
+		line-height: 1;
+		color: var(--cf-orange);
+		letter-spacing: -0.035em;
+	}
+
+	@media (min-width: 720px) {
+		.demo-card {
+			padding: 24px;
+		}
+
+		.demo-header {
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+		}
+
+		.status-badge {
+			align-self: center;
+		}
+
+		.stats-grid {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
+	@media (min-width: 1024px) {
+		.demo-grid {
+			grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.55fr);
+			gap: 22px;
+		}
+
+		.stats-grid {
+			grid-template-columns: repeat(6, 1fr);
+		}
+	}
+</style>

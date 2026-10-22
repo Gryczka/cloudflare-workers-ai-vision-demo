@@ -1,0 +1,1621 @@
+---
+/**
+ * ExtractDemo — markup, styles, and client logic for the live multimodal
+ * extraction dashboard (`/extract`) powered by `@cf/cloudflare/clairic`.
+ *
+ * Mirrors DecideDemo: sampled 640x360 JPEG frames with single-flight
+ * AbortController concurrency, built-in Field Schema presets (rendered from
+ * `EXTRACT_PRESETS`, in object order), and a live Field Schema editor (`Edit fields (E)` button or `E`
+ * shortcut) persisted per preset in `localStorage`.
+ *
+ * Unlike DecideDemo, the client script is a bundled module (not `is:inline`)
+ * so it imports the exact same presets and validator as `POST /api/extract`
+ * from `src/lib/field-schema.ts`.
+ */
+import { DEFAULT_EXTRACT_PRESET, EXTRACT_PRESETS } from '../lib/field-schema.ts';
+
+const presetButtons = Object.entries(EXTRACT_PRESETS).map(([key, preset]) => ({ key, label: preset.label }));
+const defaultPreset = EXTRACT_PRESETS[DEFAULT_EXTRACT_PRESET];
+---
+
+<section id="demo" class="demo-section container scroll-reveal" aria-labelledby="extract-title">
+	<div class="demo-card corner-card" data-extract-demo>
+		<span class="corner-top-right"></span>
+		<span class="corner-bottom-left"></span>
+
+		<div class="demo-header">
+			<div>
+				<p class="eyebrow">Structured multimodal extraction</p>
+				<h2 id="extract-title">Live typed values</h2>
+			</div>
+			<div class="status-badge" aria-live="polite">
+				<span class="status-dot" aria-hidden="true"></span>
+				<span data-status-text>Idle</span>
+			</div>
+		</div>
+
+		<div class="preset-bar">
+			<div class="preset-selector" role="group" aria-label="Extraction field preset selector">
+				<span class="selector-label">Preset</span>
+				{presetButtons.map(({ key, label }) => (
+					<button
+						class:list={['preset-button', { active: key === DEFAULT_EXTRACT_PRESET }]}
+						type="button"
+						data-preset-button
+						data-preset={key}
+					>
+						{label}
+					</button>
+				))}
+			</div>
+
+			<button
+				class="editor-toggle-button"
+				type="button"
+				data-editor-toggle
+				aria-expanded="false"
+				aria-controls="extract-field-editor"
+			>
+				Edit fields (E)
+			</button>
+		</div>
+
+		<div
+			id="extract-field-editor"
+			class="question-editor"
+			data-field-editor
+			hidden
+			aria-label="Live field schema JSON editor"
+		>
+			<div class="editor-header">
+				<div>
+					<p class="eyebrow">Custom schema</p>
+					<h3>Edit state &amp; fields JSON</h3>
+				</div>
+				<span class="editor-hint">
+					1–32 fields · types: <code>text</code>, <code>number</code>, <code>date</code>, <code>time</code>,
+					<code>datetime</code>, <code>duration</code>, <code>list</code>, <code>estimate</code>, <code>forecast</code>
+				</span>
+			</div>
+
+			<div class="editor-fields">
+				<label class="editor-field" for="extract-state-input">
+					<span class="field-label">State</span>
+					<input
+						id="extract-state-input"
+						class="editor-input"
+						type="text"
+						data-editor-state
+						placeholder="Describe the scene or camera context..."
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</label>
+
+				<label class="editor-field" for="extract-fields-input">
+					<span class="field-label">Fields JSON</span>
+					<textarea
+						id="extract-fields-input"
+						class="editor-textarea"
+						rows="12"
+						data-editor-fields
+						spellcheck="false"
+					></textarea>
+				</label>
+			</div>
+
+			<div class="editor-feedback" data-editor-feedback hidden role="status" aria-live="polite"></div>
+
+			<div class="editor-actions">
+				<button class="control-button primary editor-action" type="button" data-editor-apply>Apply</button>
+				<button class="control-button outline editor-action" type="button" data-editor-format>Format</button>
+				<button class="control-button ghost editor-action" type="button" data-editor-reset>Reset to preset</button>
+			</div>
+		</div>
+
+		<div class="demo-grid">
+			<div class="video-panel">
+				<div class="video-stage" data-video-stage>
+					<video id="extract-camera-video" muted playsinline></video>
+					<div class="frame-pulse" data-frame-pulse aria-hidden="true"></div>
+					<div class="stage-tag">typed fields · confidence · p10–p90 intervals</div>
+					<div class="empty-state" data-empty-state>
+						<div class="camera-icon" aria-hidden="true">
+							<svg viewBox="0 0 24 24">
+								<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5V8l3.72-2.13A1.5 1.5 0 0 1 22 7.17v9.66a1.5 1.5 0 0 1-2.28 1.3L16 16v1.5a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 17.5v-11Zm2.5-.5A.5.5 0 0 0 6 6.5v11a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5h-7Zm9.5 4.3v3.4l4 2.29V8.01l-4 2.29Z"></path>
+							</svg>
+						</div>
+						<p>Start the camera to extract typed values with Clairic.</p>
+						<span>
+							Each sampled frame is read against every active field—counts, readings, dates, and text—with a confidence or interval on every answer.
+						</span>
+					</div>
+				</div>
+
+				<canvas id="extract-capture-buffer" width="640" height="360" hidden></canvas>
+
+				<div class="controls" aria-label="Extraction dashboard controls">
+					<button class="control-button primary" type="button" data-start-button>Start camera</button>
+					<button class="control-button ghost" type="button" data-pause-button disabled>Pause stream</button>
+					<button class="control-button outline" type="button" data-switch-button disabled>Switch camera</button>
+				</div>
+
+				<div class="error-panel" data-error-panel hidden role="alert"></div>
+			</div>
+
+			<aside class="decisions-panel" aria-labelledby="extract-panel-title">
+				<div class="panel-heading">
+					<div>
+						<p class="eyebrow">Extraction stream</p>
+						<h3 id="extract-panel-title" data-preset-title>{defaultPreset.label}</h3>
+					</div>
+					<span class="threshold">@cf/cloudflare/clairic</span>
+				</div>
+
+				<p class="state-context" data-state-context>State: {defaultPreset.state}</p>
+				<p class="truncated-note" data-truncated-note hidden>State was truncated to fit the context window.</p>
+
+				<div class="decision-cards" data-field-cards aria-live="polite"></div>
+			</aside>
+		</div>
+
+		<div class="stats-grid" aria-label="Extraction telemetry">
+			<div class="stat-card"><span>Round trip</span><strong data-stat-latency>-</strong></div>
+			<div class="stat-card"><span>Inference</span><strong data-stat-inference>-</strong></div>
+			<div class="stat-card"><span>Fields</span><strong data-stat-fields>{Object.keys(defaultPreset.fields).length}</strong></div>
+			<div class="stat-card"><span>Passes</span><strong data-stat-passes>-</strong></div>
+			<div class="stat-card"><span>Input tokens</span><strong data-stat-tokens>-</strong></div>
+			<div class="stat-card"><span>Payload</span><strong data-stat-bytes>-</strong></div>
+		</div>
+	</div>
+</section>
+
+<script>
+	import { DEFAULT_EXTRACT_PRESET, EXTRACT_PRESETS, MAX_FIELDS, normalizeFields } from '../lib/field-schema.ts';
+
+	type Answer = Record<string, any>;
+	type Fields = Record<string, any>;
+	type Override = { state: string; fields: Fields; rawFields: unknown };
+
+	const root = document.querySelector<HTMLElement>('[data-extract-demo]');
+	if (root) initExtractDemo(root);
+
+	function initExtractDemo(root: HTMLElement) {
+		const sampleMs = 1200;
+		const captureWidth = 640;
+		const captureHeight = 360;
+		const storageKey = 'cf_vision_extract_custom_v1';
+		const presets = EXTRACT_PRESETS as Record<string, { label: string; state: string; fields: Fields }>;
+
+		const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as T;
+		const refs = {
+			video: q<HTMLVideoElement>('#extract-camera-video'),
+			buffer: q<HTMLCanvasElement>('#extract-capture-buffer'),
+			empty: q('[data-empty-state]'),
+			pulse: q('[data-frame-pulse]'),
+			statusText: q('[data-status-text]'),
+			startButton: q<HTMLButtonElement>('[data-start-button]'),
+			pauseButton: q<HTMLButtonElement>('[data-pause-button]'),
+			switchButton: q<HTMLButtonElement>('[data-switch-button]'),
+			errorPanel: q('[data-error-panel]'),
+			presetButtons: root.querySelectorAll<HTMLButtonElement>('[data-preset-button]'),
+			editorToggle: q<HTMLButtonElement>('[data-editor-toggle]'),
+			editorPanel: q('[data-field-editor]'),
+			editorState: q<HTMLInputElement>('[data-editor-state]'),
+			editorFields: q<HTMLTextAreaElement>('[data-editor-fields]'),
+			editorFeedback: q('[data-editor-feedback]'),
+			editorApply: q<HTMLButtonElement>('[data-editor-apply]'),
+			editorFormat: q<HTMLButtonElement>('[data-editor-format]'),
+			editorReset: q<HTMLButtonElement>('[data-editor-reset]'),
+			presetTitle: q('[data-preset-title]'),
+			stateContext: q('[data-state-context]'),
+			truncatedNote: q('[data-truncated-note]'),
+			fieldCards: q('[data-field-cards]'),
+			latency: q('[data-stat-latency]'),
+			inference: q('[data-stat-inference]'),
+			fieldsCount: q('[data-stat-fields]'),
+			passes: q('[data-stat-passes]'),
+			tokens: q('[data-stat-tokens]'),
+			bytes: q('[data-stat-bytes]'),
+		};
+
+		let stream: MediaStream | null = null;
+		let intervalId: number | null = null;
+		let inFlight: AbortController | null = null;
+		let facingMode = 'user';
+		let preferredDeviceId: string | null = null;
+		let selectedPreset: string = DEFAULT_EXTRACT_PRESET;
+		let editorOpen = false;
+		const customOverrides: Record<string, Override> = loadSavedOverrides();
+		const bufferContext = refs.buffer.getContext('2d')!;
+
+		// ---------- persistence ----------
+
+		function loadSavedOverrides(): Record<string, Override> {
+			const loaded: Record<string, Override> = {};
+			try {
+				const parsed = JSON.parse(window.localStorage.getItem(storageKey) || 'null');
+				if (!parsed || typeof parsed !== 'object') return loaded;
+				for (const key of Object.keys(presets)) {
+					const entry = parsed[key];
+					if (!entry || typeof entry !== 'object') continue;
+					const validated = normalizeFields(entry.fields);
+					if (!validated.ok) continue;
+					const state = typeof entry.state === 'string' && entry.state.trim() ? entry.state.trim() : presets[key].state;
+					loaded[key] = { state, fields: validated.fields, rawFields: entry.fields };
+				}
+			} catch {
+				// Ignore storage access or parse errors (private / restricted browsing).
+			}
+			return loaded;
+		}
+
+		function persistOverrides() {
+			try {
+				const keys = Object.keys(customOverrides);
+				if (keys.length === 0) {
+					window.localStorage.removeItem(storageKey);
+					return;
+				}
+				const serialized: Record<string, unknown> = {};
+				for (const key of keys) {
+					serialized[key] = { state: customOverrides[key].state, fields: customOverrides[key].rawFields };
+				}
+				window.localStorage.setItem(storageKey, JSON.stringify(serialized));
+			} catch {
+				// Ignore quota or security errors.
+			}
+		}
+
+		function getActivePreset() {
+			const base = presets[selectedPreset] || presets[DEFAULT_EXTRACT_PRESET];
+			const override = customOverrides[selectedPreset];
+			if (!override) return { ...base, custom: false };
+			return { label: `${base.label} (Custom)`, state: override.state, fields: override.fields, custom: true };
+		}
+
+		// ---------- editor ----------
+
+		function setEditorFeedback(message: string, tone = 'error') {
+			const el = refs.editorFeedback;
+			el.hidden = !message;
+			el.textContent = message;
+			if (message) el.dataset.tone = tone;
+			else delete el.dataset.tone;
+		}
+
+		function syncEditorInputs() {
+			const base = presets[selectedPreset] || presets[DEFAULT_EXTRACT_PRESET];
+			const override = customOverrides[selectedPreset];
+			refs.editorState.value = override ? override.state : base.state;
+			refs.editorFields.value = JSON.stringify(override ? override.rawFields : base.fields, null, 2);
+		}
+
+		function toggleEditor(force?: boolean) {
+			editorOpen = typeof force === 'boolean' ? force : !editorOpen;
+			refs.editorPanel.hidden = !editorOpen;
+			refs.editorToggle.classList.toggle('active', editorOpen);
+			refs.editorToggle.setAttribute('aria-expanded', String(editorOpen));
+			if (editorOpen) {
+				syncEditorInputs();
+				setEditorFeedback('');
+				refs.editorFields.focus();
+			}
+		}
+
+		function parseEditor(): { parsed: unknown; fields: Fields } | null {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(refs.editorFields.value);
+			} catch (error) {
+				setEditorFeedback(`Invalid JSON: ${(error as Error)?.message || 'Unable to parse fields JSON.'}`);
+				return null;
+			}
+			const validated = normalizeFields(parsed);
+			if (!validated.ok) {
+				setEditorFeedback(validated.error);
+				return null;
+			}
+			return { parsed, fields: validated.fields };
+		}
+
+		function formatEditorJson() {
+			const result = parseEditor();
+			if (!result) return;
+			refs.editorFields.value = JSON.stringify(result.parsed, null, 2);
+			setEditorFeedback('Formatted valid field schema.', 'success');
+		}
+
+		function restartStream() {
+			clearError();
+			renderFieldCards(null);
+			if (stream) {
+				inFlight?.abort();
+				inFlight = null;
+				captureAndExtract();
+			}
+		}
+
+		function applyEditorChanges() {
+			const result = parseEditor();
+			if (!result) return;
+			const base = presets[selectedPreset] || presets[DEFAULT_EXTRACT_PRESET];
+			const state = refs.editorState.value.trim() || base.state;
+			refs.editorState.value = state;
+			refs.editorFields.value = JSON.stringify(result.parsed, null, 2);
+			customOverrides[selectedPreset] = { state, fields: result.fields, rawFields: result.parsed };
+			persistOverrides();
+			setEditorFeedback(
+				`Applied ${Object.keys(result.fields).length} custom field(s) and saved to browser storage.`,
+				'success'
+			);
+			restartStream();
+		}
+
+		function resetEditorToPreset() {
+			delete customOverrides[selectedPreset];
+			persistOverrides();
+			syncEditorInputs();
+			setEditorFeedback(`Reset to ${presets[selectedPreset].label} preset defaults.`, 'info');
+			restartStream();
+		}
+
+		// ---------- rendering ----------
+
+		function renderFieldCards(answers: Record<string, Answer> | null, truncated = false) {
+			const preset = getActivePreset();
+			const entries = Object.entries(preset.fields || {});
+			refs.presetTitle.textContent = preset.label;
+			refs.stateContext.textContent = `State: ${preset.state}`;
+			refs.fieldsCount.textContent = String(entries.length);
+			refs.truncatedNote.hidden = !truncated;
+			refs.fieldCards.innerHTML = entries
+				.map(([name, field]) => renderCard(name, field, answers ? answers[name] : null))
+				.join('');
+		}
+
+		function renderCard(name: string, field: Fields, answer: Answer | null) {
+			const body =
+				field.type === 'estimate'
+					? renderEstimate(field, answer)
+					: field.type === 'forecast'
+						? renderForecast(field, answer)
+						: field.type === 'list'
+							? renderList(field, answer)
+							: renderScalar(field, answer);
+			return `
+				<article class="decision-card" data-field-name="${escapeHtml(name)}" data-field-type="${escapeHtml(field.type)}">
+					<div class="card-top">
+						<div>
+							<span class="question-id">${escapeHtml(name)}</span>
+							<h4>${escapeHtml(field.instructions || prettyLabel(name))}</h4>
+						</div>
+						<span class="type-pill">${escapeHtml(field.type)}${field.items ? `&lt;${escapeHtml(field.items)}&gt;` : ''}</span>
+					</div>
+					${body}
+				</article>
+			`;
+		}
+
+		function waitingRow() {
+			return `<div class="verdict-row"><span class="verdict-badge neutral">Waiting</span><span class="confidence-label">Awaiting frame</span></div>`;
+		}
+
+		function confidenceBar(label: string, p: number) {
+			const pct = clamp(p, 0, 1);
+			return `
+				<div class="prob-rows">
+					<div class="prob-row winner">
+						<span class="opt-label">${escapeHtml(label)}</span>
+						<div class="prob-track"><div class="prob-fill" style="width: ${(pct * 100).toFixed(1)}%"></div></div>
+						<span class="opt-pct">${formatPercent(pct)}</span>
+					</div>
+				</div>
+			`;
+		}
+
+		function renderScalar(field: Fields, answer: Answer | null) {
+			if (!answer) return waitingRow();
+			const found = answer.value !== null && answer.value !== undefined;
+			const pNull = num(answer.p_null);
+			const badge = found
+				? `<span class="verdict-badge winner-badge">${escapeHtml(formatValue(answer.value, field))}</span>`
+				: `<span class="verdict-badge neutral">Not found</span>`;
+			const side =
+				pNull !== null ? `P(not present) ${formatPercent(pNull)}` : found ? '' : 'No value in frame';
+			const guess =
+				!found && answer.guess !== null && answer.guess !== undefined && answer.guess !== ''
+					? `<p class="score-legend">Best guess: <code>${escapeHtml(formatValue(answer.guess, field))}</code></p>`
+					: '';
+			const conf = num(answer.confidence);
+			return `
+				<div class="verdict-row">${badge}<span class="confidence-label">${escapeHtml(side)}</span></div>
+				${guess}
+				${conf !== null ? confidenceBar('confidence', conf) : ''}
+			`;
+		}
+
+		function renderList(field: Fields, answer: Answer | null) {
+			if (!answer) return waitingRow();
+			const values = Array.isArray(answer.value) ? answer.value : [];
+			const chips = values.length
+				? `<div class="value-chips">${values
+						.map((v: unknown) => `<span class="value-chip">${escapeHtml(formatValue(v, { ...field, type: field.items }))}</span>`)
+						.join('')}</div>`
+				: '';
+			const conf = num(answer.confidence);
+			return `
+				<div class="verdict-row">
+					<span class="verdict-badge ${values.length ? 'winner-badge' : 'neutral'}">${values.length ? `${values.length} item${values.length === 1 ? '' : 's'}` : 'None found'}</span>
+					<span class="confidence-label"></span>
+				</div>
+				${chips}
+				${conf !== null ? confidenceBar('confidence', conf) : ''}
+			`;
+		}
+
+		function renderEstimate(field: Fields, answer: Answer | null) {
+			if (!answer) return waitingRow();
+			const median = answer.median ?? answer.value;
+			if (median === null || median === undefined) {
+				return `<div class="verdict-row"><span class="verdict-badge neutral">Not determined</span><span class="confidence-label"></span></div>`;
+			}
+			const interval = `p10–p90: ${formatValue(answer.p10, field)} – ${formatValue(answer.p90, field)}`;
+			return `
+				<div class="verdict-row">
+					<span class="verdict-badge score-badge">${escapeHtml(formatValue(median, field))}</span>
+					<span class="confidence-label">${escapeHtml(interval)}</span>
+				</div>
+				${renderIntervalTrack(field, answer)}
+				${renderTails(field, answer)}
+			`;
+		}
+
+		function renderIntervalTrack(field: Fields, est: Answer) {
+			const min = toAxis(field.min);
+			const max = toAxis(field.max);
+			const p10 = toAxis(est.p10);
+			const p90 = toAxis(est.p90);
+			const med = toAxis(est.median ?? est.value);
+			if ([min, max, p10, p90, med].some((v) => v === null) || (max as number) <= (min as number)) return '';
+			const pos = (v: number) => clamp(((v - (min as number)) / ((max as number) - (min as number))) * 100, 0, 100);
+			const left = pos(p10 as number);
+			const width = Math.max(pos(p90 as number) - left, 1);
+			return `
+				<div class="interval-track" aria-hidden="true">
+					<div class="interval-band" style="left: ${left.toFixed(1)}%; width: ${width.toFixed(1)}%"></div>
+					<div class="interval-median" style="left: ${pos(med as number).toFixed(1)}%"></div>
+				</div>
+				<div class="interval-axis"><span>${escapeHtml(formatValue(field.min, field))}</span><span>${escapeHtml(formatValue(field.max, field))}</span></div>
+			`;
+		}
+
+		function renderTails(field: Fields, est: Answer) {
+			const below = num(est.p_below);
+			const above = num(est.p_above);
+			const notes: string[] = [];
+			if (below !== null && below >= 0.05) notes.push(`${formatPercent(below)} below ${formatValue(field.min, field)}`);
+			if (above !== null && above >= 0.05) notes.push(`${formatPercent(above)} above ${formatValue(field.max, field)}`);
+			return notes.length ? `<p class="score-legend">Outside range: ${escapeHtml(notes.join(' · '))}</p>` : '';
+		}
+
+		function renderForecast(field: Fields, answer: Answer | null) {
+			if (!answer) return waitingRow();
+			const steps = Array.isArray(answer.steps) ? answer.steps : [];
+			if (!steps.length) {
+				return `<div class="verdict-row"><span class="verdict-badge neutral">Not determined</span><span class="confidence-label"></span></div>`;
+			}
+			const rows = steps
+				.map((step: Answer, i: number) => {
+					const median = step.median ?? step.value;
+					return `
+						<div class="forecast-row">
+							<span class="opt-label">+${i + 1}${field.interval ? ` ${escapeHtml(field.interval)}` : ''}</span>
+							<strong>${escapeHtml(formatValue(median, field))}</strong>
+							<span class="confidence-label">${escapeHtml(formatValue(step.p10, field))} – ${escapeHtml(formatValue(step.p90, field))}</span>
+						</div>
+					`;
+				})
+				.join('');
+			return `<div class="forecast-rows">${rows}</div>`;
+		}
+
+		// ---------- formatting ----------
+
+		function formatValue(value: unknown, field: Fields): string {
+			if (value === null || value === undefined) return '—';
+			if (typeof value === 'number') {
+				const digits = typeof field.decimals === 'number' ? field.decimals : Number.isInteger(value) ? 0 : 2;
+				const text = value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+				return field.unit ? `${text} ${field.unit}` : text;
+			}
+			if (Array.isArray(value)) return value.map((v) => formatValue(v, field)).join(', ');
+			if (typeof value === 'object') return JSON.stringify(value);
+			return String(value);
+		}
+
+		function toAxis(value: unknown): number | null {
+			if (typeof value === 'number' && Number.isFinite(value)) return value;
+			if (typeof value === 'string') {
+				const t = Date.parse(value);
+				return Number.isNaN(t) ? null : t;
+			}
+			return null;
+		}
+
+		function num(value: unknown): number | null {
+			return typeof value === 'number' && Number.isFinite(value) ? value : null;
+		}
+
+		function formatPercent(p: number) {
+			const pct = clamp(p, 0, 1) * 100;
+			if ((pct > 0 && pct < 1) || (pct > 99 && pct < 100)) return `${pct.toFixed(1)}%`;
+			return `${Math.round(pct)}%`;
+		}
+
+		function prettyLabel(key: string) {
+			return key.replace(/[_-]+/g, ' ').trim();
+		}
+
+		function clamp(value: number, min: number, max: number) {
+			return Math.min(Math.max(value, min), max);
+		}
+
+		function escapeHtml(value: unknown) {
+			return String(value).replace(
+				/[&<>"]/g,
+				(c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string
+			);
+		}
+
+		// ---------- status ----------
+
+		function setStatus(text: string, state: string) {
+			refs.statusText.textContent = text;
+			root.dataset.status = state;
+		}
+
+		function setError(message: string) {
+			refs.errorPanel.hidden = false;
+			refs.errorPanel.textContent = message;
+			setStatus('Error', 'error');
+		}
+
+		function clearError() {
+			refs.errorPanel.hidden = true;
+			refs.errorPanel.textContent = '';
+		}
+
+		// ---------- camera + capture ----------
+
+		function startPolling() {
+			if (intervalId) return;
+			captureAndExtract();
+			intervalId = window.setInterval(captureAndExtract, sampleMs);
+		}
+
+		function stopPolling() {
+			if (intervalId) {
+				window.clearInterval(intervalId);
+				intervalId = null;
+			}
+			inFlight?.abort();
+			inFlight = null;
+		}
+
+		async function listVideoInputs() {
+			if (!navigator.mediaDevices?.enumerateDevices) return [];
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			const inputs: MediaDeviceInfo[] = [];
+			for (const device of devices) {
+				if (device.kind !== 'videoinput' || !device.deviceId) continue;
+				if (inputs.some((item) => item.deviceId === device.deviceId)) continue;
+				inputs.push(device);
+			}
+			return inputs;
+		}
+
+		function activeVideoDeviceId() {
+			const track = stream?.getVideoTracks?.()[0];
+			return track?.getSettings?.().deviceId || preferredDeviceId;
+		}
+
+		function setSwitchCameraLabel(inputs: MediaDeviceInfo[]) {
+			const label = inputs.find((d) => d.deviceId === activeVideoDeviceId())?.label?.trim();
+			refs.switchButton.title = label ? `Switch camera (current: ${label})` : 'Switch camera';
+		}
+
+		async function openCameraStream() {
+			const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+			const attempts: MediaTrackConstraints[] = [];
+			if (preferredDeviceId) {
+				attempts.push({ ...size, deviceId: { exact: preferredDeviceId } });
+				attempts.push({ deviceId: { exact: preferredDeviceId } });
+			}
+			attempts.push({ ...size, facingMode });
+
+			let lastError: unknown = null;
+			for (const video of attempts) {
+				try {
+					return await navigator.mediaDevices.getUserMedia({ audio: false, video });
+				} catch (error) {
+					lastError = error;
+					if ((error as DOMException)?.name === 'NotAllowedError') throw error;
+				}
+			}
+			throw lastError;
+		}
+
+		async function startCamera() {
+			clearError();
+			if (!navigator.mediaDevices?.getUserMedia) {
+				setError('This browser does not expose getUserMedia. Try a current desktop or mobile browser.');
+				return;
+			}
+			if (!window.isSecureContext && location.hostname !== 'localhost') {
+				setError('Camera capture requires HTTPS. Deploy to workers.dev or run on localhost.');
+				return;
+			}
+
+			setStatus('Requesting camera', 'pending');
+			refs.startButton.disabled = true;
+			try {
+				stream = await openCameraStream();
+				preferredDeviceId = activeVideoDeviceId() || preferredDeviceId;
+				refs.video.srcObject = stream;
+				await refs.video.play();
+				refs.empty.hidden = true;
+				refs.pauseButton.disabled = false;
+				refs.switchButton.disabled = false;
+				setSwitchCameraLabel(await listVideoInputs());
+				setStatus('Streaming extraction', 'streaming');
+				startPolling();
+			} catch (error) {
+				refs.startButton.disabled = false;
+				if ((error as DOMException)?.name === 'NotAllowedError') {
+					setError('Camera permission was denied. Allow camera access and try again.');
+					return;
+				}
+				setError('Could not start the camera on this device.');
+			}
+		}
+
+		function stopCamera() {
+			stopPolling();
+			if (stream) {
+				for (const track of stream.getTracks()) track.stop();
+				stream = null;
+			}
+			refs.video.srcObject = null;
+			refs.empty.hidden = false;
+			refs.startButton.disabled = false;
+			refs.pauseButton.disabled = true;
+			refs.switchButton.disabled = true;
+			setStatus('Paused', 'idle');
+		}
+
+		async function switchCamera() {
+			let inputs: MediaDeviceInfo[] = [];
+			try {
+				inputs = await listVideoInputs();
+			} catch {
+				inputs = [];
+			}
+			if (inputs.length > 1) {
+				const current = inputs.findIndex((d) => d.deviceId === activeVideoDeviceId());
+				preferredDeviceId = inputs[current >= 0 ? (current + 1) % inputs.length : 1].deviceId;
+			} else {
+				facingMode = facingMode === 'user' ? 'environment' : 'user';
+				preferredDeviceId = null;
+			}
+			stopCamera();
+			await startCamera();
+		}
+
+		async function captureAndExtract() {
+			if (!stream || inFlight || refs.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+			refs.buffer.width = captureWidth;
+			refs.buffer.height = captureHeight;
+			bufferContext.drawImage(refs.video, 0, 0, captureWidth, captureHeight);
+
+			const active = getActivePreset();
+			let fetchUrl = `/api/extract?preset=${encodeURIComponent(selectedPreset)}`;
+			let headers: Record<string, string> = { 'content-type': 'image/jpeg' };
+			let body: BodyInit;
+
+			if (active.custom) {
+				const dataUrl = refs.buffer.toDataURL('image/jpeg', 0.7);
+				if (!dataUrl || dataUrl === 'data:,') return;
+				fetchUrl = '/api/extract';
+				headers = { 'content-type': 'application/json' };
+				body = JSON.stringify({ image: dataUrl, preset: selectedPreset, state: active.state, fields: active.fields });
+			} else {
+				const blob = await new Promise<Blob | null>((resolve) => refs.buffer.toBlob(resolve, 'image/jpeg', 0.7));
+				if (!blob) return;
+				body = blob;
+			}
+
+			const controller = new AbortController();
+			inFlight = controller;
+			setStatus('Extracting', 'detecting');
+			const started = performance.now();
+
+			try {
+				const response = await fetch(fetchUrl, { method: 'POST', body, headers, signal: controller.signal });
+				const payload = await response.json().catch(() => ({}));
+				if (!response.ok) throw new Error(payload.error || `Extraction request failed with ${response.status}`);
+
+				renderFieldCards(payload.answers || {}, Boolean(payload.truncated));
+				updateStats(performance.now() - started, payload);
+				triggerPulse();
+				setStatus('Streaming extraction', 'streaming');
+			} catch (error) {
+				if ((error as Error)?.name === 'AbortError') return;
+				setError((error as Error)?.message || 'Extraction request failed.');
+				stopPolling();
+			} finally {
+				if (inFlight === controller) inFlight = null;
+			}
+		}
+
+		function updateStats(roundTripMs: number, payload: any) {
+			refs.latency.textContent = `${Math.round(roundTripMs)} ms`;
+			refs.inference.textContent = Number.isFinite(payload.inferenceMs) ? `${Math.round(payload.inferenceMs)} ms` : '-';
+			const usage = payload.usage || {};
+			refs.tokens.textContent = Number.isFinite(usage.input_tokens) ? String(usage.input_tokens) : '-';
+			refs.passes.textContent = Number.isFinite(usage.passes) && usage.passes > 0 ? String(usage.passes) : '-';
+			refs.bytes.textContent = Number.isFinite(payload.bytes) ? `${Math.round(payload.bytes / 1024)} KB` : '-';
+		}
+
+		function triggerPulse() {
+			refs.pulse.classList.add('active');
+			window.setTimeout(() => refs.pulse.classList.remove('active'), 140);
+		}
+
+		function setPreset(key: string | undefined) {
+			if (!key || !presets[key]) return;
+			selectedPreset = key;
+			refs.presetButtons.forEach((b) => b.classList.toggle('active', b.dataset.preset === key));
+			if (editorOpen) {
+				syncEditorInputs();
+				setEditorFeedback('');
+			}
+			restartStream();
+		}
+
+		function isEditableTarget(target: EventTarget | null) {
+			if (!(target instanceof HTMLElement)) return false;
+			return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
+		}
+
+		refs.startButton.addEventListener('click', startCamera);
+		refs.pauseButton.addEventListener('click', stopCamera);
+		refs.switchButton.addEventListener('click', switchCamera);
+		refs.presetButtons.forEach((b) => b.addEventListener('click', () => setPreset(b.dataset.preset)));
+		refs.editorToggle.addEventListener('click', () => toggleEditor());
+		refs.editorApply.addEventListener('click', applyEditorChanges);
+		refs.editorFormat.addEventListener('click', formatEditorJson);
+		refs.editorReset.addEventListener('click', resetEditorToPreset);
+
+		document.addEventListener('keydown', (event) => {
+			if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+			if (isEditableTarget(event.target)) return;
+			if (event.key === 'e' || event.key === 'E') {
+				event.preventDefault();
+				toggleEditor();
+			}
+		});
+
+		document.addEventListener('visibilitychange', () => {
+			if (document.hidden) stopPolling();
+			else if (stream) startPolling();
+		});
+
+		window.addEventListener('beforeunload', stopCamera);
+		refs.editorFields.setAttribute('aria-description', `1 to ${MAX_FIELDS} fields`);
+		syncEditorInputs();
+		renderFieldCards(null);
+	}
+</script>
+
+<style>
+	.demo-section {
+		padding-block: 28px 42px;
+	}
+
+	.demo-card {
+		padding: 18px;
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--shadow-stack);
+		animation: fade-slide-up 650ms var(--ease-entrance) 120ms both;
+	}
+
+	.demo-header,
+	.preset-bar,
+	.question-editor,
+	.demo-grid,
+	.stats-grid {
+		position: relative;
+		z-index: 1;
+	}
+
+	.demo-header {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		padding: 6px 6px 18px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.eyebrow {
+		margin: 0 0 6px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		letter-spacing: 0.05em;
+		color: var(--cf-orange);
+		text-transform: uppercase;
+	}
+
+	h2,
+	h3,
+	h4 {
+		margin: 0;
+		font-weight: 500;
+		letter-spacing: -0.035em;
+	}
+
+	h2 {
+		font-size: clamp(1.75rem, 4vw, 2.5rem);
+		line-height: 1;
+	}
+
+	h3 {
+		font-size: 20px;
+	}
+
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		align-self: flex-start;
+		gap: 8px;
+		padding: 8px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.status-dot {
+		width: 8px;
+		height: 8px;
+		background: var(--cf-text-subtle);
+		border-radius: 999px;
+	}
+
+	.demo-card[data-status='pending'] .status-dot,
+	.demo-card[data-status='detecting'] .status-dot {
+		background: var(--cf-warning);
+		animation: pulse-soft 1s ease-in-out infinite;
+	}
+
+	.demo-card[data-status='streaming'] .status-dot {
+		background: var(--cf-success);
+	}
+
+	.demo-card[data-status='error'] .status-dot {
+		background: var(--cf-error);
+	}
+
+	.preset-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-top: 18px;
+	}
+
+	.preset-selector {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		padding: 5px;
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.selector-label {
+		padding: 0 8px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text-muted);
+	}
+
+	.preset-button {
+		min-height: 36px;
+		padding: 8px 14px;
+		font-size: 13px;
+		color: var(--cf-text-muted);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--radius-full);
+	}
+
+	.preset-button:hover {
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+	}
+
+	.preset-button.active {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	.editor-toggle-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 38px;
+		padding: 8px 14px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		color: var(--cf-text);
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	.editor-toggle-button:hover {
+		background: var(--cf-bg-300);
+		border-color: var(--cf-orange);
+		border-style: dashed;
+	}
+
+	.editor-toggle-button.active {
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-color: var(--cf-orange);
+	}
+
+	.question-editor {
+		margin-top: 14px;
+		padding: 18px;
+		background: var(--cf-bg-100);
+		border: 1px dashed var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	.question-editor[hidden] {
+		display: none;
+	}
+
+	.editor-header {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.editor-hint {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	.editor-hint code {
+		padding: 2px 5px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-radius: var(--radius-sm);
+	}
+
+	.editor-fields {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin-top: 14px;
+	}
+
+	.editor-field {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.field-label {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		color: var(--cf-text-muted);
+		text-transform: uppercase;
+	}
+
+	.editor-input,
+	.editor-textarea {
+		width: 100%;
+		padding: 10px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--cf-text);
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-md);
+	}
+
+	.editor-textarea {
+		resize: vertical;
+		min-height: 180px;
+	}
+
+	.editor-input:focus,
+	.editor-textarea:focus {
+		outline: none;
+		border-color: var(--cf-orange);
+		box-shadow: var(--shadow-focus);
+	}
+
+	.editor-feedback {
+		margin-top: 12px;
+		padding: 10px 12px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 1.45;
+		border-radius: var(--radius-md);
+	}
+
+	.editor-feedback[hidden] {
+		display: none;
+	}
+
+	.editor-feedback[data-tone='error'] {
+		color: var(--cf-error);
+		background: color-mix(in srgb, var(--cf-error) 9%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-error) 36%, transparent);
+	}
+
+	.editor-feedback[data-tone='success'] {
+		color: var(--cf-success);
+		background: color-mix(in srgb, var(--cf-success) 10%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-success) 32%, transparent);
+	}
+
+	.editor-feedback[data-tone='info'] {
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+	}
+
+	.editor-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 14px;
+	}
+
+	.editor-action {
+		min-height: 38px;
+		padding: 8px 14px;
+		font-size: 13px;
+	}
+
+	.demo-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 18px;
+		padding-block: 20px;
+	}
+
+	.video-panel {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.video-stage {
+		position: relative;
+		min-height: 260px;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		background:
+			linear-gradient(135deg, rgba(82, 16, 0, 0.08), transparent),
+			#1a1209;
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	#decide-camera-video,
+	.empty-state {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+	#decide-camera-video {
+		object-fit: cover;
+	}
+
+	.frame-pulse {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		border: 3px solid var(--cf-orange);
+		border-radius: var(--radius-xl);
+		opacity: 0;
+		transition: opacity 150ms var(--ease-out);
+	}
+
+	.frame-pulse.active {
+		opacity: 0.85;
+		transition: none;
+	}
+
+	.stage-tag {
+		position: absolute;
+		left: 14px;
+		bottom: 14px;
+		padding: 6px 10px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: rgba(255, 251, 245, 0.82);
+		background: rgba(18, 18, 18, 0.68);
+		border: 1px solid rgba(255, 251, 245, 0.14);
+		border-radius: var(--radius-md);
+		backdrop-filter: blur(6px);
+	}
+
+	.empty-state {
+		display: grid;
+		place-items: center;
+		padding: 24px;
+		color: #fffbf5;
+		text-align: center;
+		background-image: radial-gradient(circle, rgba(255, 251, 245, 0.16) 0.75px, transparent 0.75px);
+		background-size: 12px 12px;
+	}
+
+	.empty-state[hidden] {
+		display: none;
+	}
+
+	.empty-state p {
+		max-width: 440px;
+		margin: 14px 0 6px;
+		font-size: clamp(1.1rem, 3vw, 1.6rem);
+		line-height: 1.1;
+		letter-spacing: -0.035em;
+	}
+
+	.empty-state span {
+		max-width: 420px;
+		font-size: 14px;
+		line-height: 1.5;
+		color: rgba(255, 251, 245, 0.7);
+	}
+
+	.camera-icon {
+		display: grid;
+		width: 58px;
+		height: 58px;
+		place-items: center;
+		color: var(--cf-orange);
+		background: rgba(255, 72, 1, 0.12);
+		border: 1px solid rgba(255, 72, 1, 0.32);
+		border-radius: var(--radius-xl);
+	}
+
+	.camera-icon svg {
+		width: 28px;
+		height: 28px;
+		fill: currentColor;
+	}
+
+	.controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+
+	.control-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 44px;
+		padding: 11px 18px;
+		font-size: 14px;
+		font-weight: 500;
+		border: 1px solid transparent;
+		border-radius: var(--radius-full);
+	}
+
+	.control-button.primary {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	.control-button.primary:hover {
+		opacity: 0.95;
+		border-color: color-mix(in srgb, var(--cf-bg-100) 50%, transparent);
+		border-style: dashed;
+	}
+
+	.control-button.ghost {
+		color: var(--cf-orange);
+		background: transparent;
+		border-color: var(--cf-border);
+	}
+
+	.control-button.outline {
+		color: var(--cf-text);
+		background: var(--cf-bg-200);
+		border-color: var(--cf-border);
+	}
+
+	.control-button.ghost:hover,
+	.control-button.outline:hover {
+		background: var(--cf-bg-300);
+		border-color: var(--cf-orange);
+		border-style: dashed;
+	}
+
+	.error-panel {
+		padding: 12px 14px;
+		font-size: 14px;
+		line-height: 1.45;
+		color: var(--cf-error);
+		background: color-mix(in srgb, var(--cf-error) 9%, var(--cf-bg-200));
+		border: 1px solid color-mix(in srgb, var(--cf-error) 36%, transparent);
+		border-radius: var(--radius-lg);
+	}
+
+	.decisions-panel {
+		min-width: 0;
+		padding: 18px;
+		background: var(--cf-bg-100);
+		border: 1px dashed var(--cf-border);
+		border-radius: var(--radius-xl);
+	}
+
+	.panel-heading {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding-bottom: 14px;
+		border-bottom: 1px solid var(--cf-border-light);
+	}
+
+	.threshold {
+		display: inline-flex;
+		align-self: flex-start;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 5px 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-orange);
+		background: var(--cf-orange-light);
+		border-radius: var(--radius-full);
+	}
+
+	.state-context {
+		margin: 12px 0 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		line-height: 1.45;
+		color: var(--cf-text-muted);
+	}
+
+	.decision-cards {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin-top: 14px;
+	}
+
+	:global(.decision-card) {
+		padding: 14px;
+		background: var(--cf-bg-200);
+		border: 1px solid var(--cf-border-light);
+		border-radius: var(--radius-lg);
+	}
+
+	:global(.card-top) {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	:global(.question-id) {
+		display: block;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.decision-card h4) {
+		margin: 3px 0 0;
+		font-size: 15px;
+		font-weight: 500;
+		line-height: 1.3;
+		color: var(--cf-text);
+	}
+
+	:global(.type-pill) {
+		padding: 3px 8px;
+		font-family: var(--font-mono);
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--cf-text-muted);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.verdict-row) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		margin-top: 10px;
+	}
+
+	:global(.verdict-badge) {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 10px;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		font-weight: 500;
+		border-radius: var(--radius-full);
+	}
+
+	:global(.verdict-badge.yes),
+	:global(.verdict-badge.winner-badge),
+	:global(.verdict-badge.score-badge) {
+		color: var(--cf-bg-100);
+		background: var(--cf-orange);
+	}
+
+	:global(.verdict-badge.no),
+	:global(.verdict-badge.neutral) {
+		color: var(--cf-text-muted);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+	}
+
+	:global(.confidence-label) {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.score-legend) {
+		margin: 8px 0 0;
+		font-size: 12px;
+		color: var(--cf-text);
+	}
+
+	:global(.prob-rows) {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin-top: 10px;
+	}
+
+	:global(.prob-row) {
+		display: grid;
+		grid-template-columns: minmax(90px, 1.1fr) minmax(80px, 1.5fr) 44px;
+		align-items: center;
+		gap: 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.prob-row.winner) {
+		color: var(--cf-text);
+		font-weight: 500;
+	}
+
+	:global(.opt-label) {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.prob-track) {
+		height: 8px;
+		overflow: hidden;
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border-light);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.prob-fill) {
+		height: 100%;
+		background: color-mix(in srgb, var(--cf-text-muted) 55%, transparent);
+		border-radius: var(--radius-full);
+		transition: width 200ms var(--ease-out);
+	}
+
+	:global(.prob-row.winner .prob-fill) {
+		background: var(--cf-orange);
+	}
+
+	:global(.opt-pct) {
+		text-align: right;
+	}
+
+	.stats-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 10px;
+		padding-top: 18px;
+		border-top: 1px solid var(--cf-border-light);
+	}
+
+	.stat-card {
+		padding: 14px;
+		background: var(--cf-bg-100);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-lg);
+	}
+
+	.stat-card span {
+		display: block;
+		margin-bottom: 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		color: var(--cf-text-muted);
+		text-transform: uppercase;
+	}
+
+	.stat-card strong {
+		display: block;
+		font-size: 24px;
+		font-weight: 500;
+		line-height: 1;
+		color: var(--cf-orange);
+		letter-spacing: -0.035em;
+	}
+
+	@media (min-width: 720px) {
+		.demo-card {
+			padding: 24px;
+		}
+
+		.demo-header {
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+		}
+
+		.status-badge {
+			align-self: center;
+		}
+
+		.stats-grid {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
+	@media (min-width: 1024px) {
+		.demo-grid {
+			grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.55fr);
+			gap: 22px;
+		}
+
+		.stats-grid {
+			grid-template-columns: repeat(6, 1fr);
+		}
+	}
+
+	.truncated-note {
+		margin: 8px 0 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-warning);
+	}
+
+	.truncated-note[hidden] {
+		display: none;
+	}
+
+	:global(.value-chips) {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 10px;
+	}
+
+	:global(.value-chip) {
+		padding: 3px 9px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--cf-text);
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.interval-track) {
+		position: relative;
+		height: 10px;
+		margin-top: 12px;
+		background: var(--cf-bg-300);
+		border: 1px solid var(--cf-border-light);
+		border-radius: var(--radius-full);
+	}
+
+	:global(.interval-band) {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		background: color-mix(in srgb, var(--cf-orange) 35%, transparent);
+		border-radius: var(--radius-full);
+		transition: left 200ms var(--ease-out), width 200ms var(--ease-out);
+	}
+
+	:global(.interval-median) {
+		position: absolute;
+		top: -3px;
+		bottom: -3px;
+		width: 3px;
+		margin-left: -1px;
+		background: var(--cf-orange);
+		border-radius: 2px;
+		transition: left 200ms var(--ease-out);
+	}
+
+	:global(.interval-axis) {
+		display: flex;
+		justify-content: space-between;
+		margin-top: 4px;
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: var(--cf-text-muted);
+	}
+
+	:global(.forecast-rows) {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-top: 10px;
+	}
+
+	:global(.forecast-row) {
+		display: grid;
+		grid-template-columns: minmax(70px, 1fr) auto minmax(90px, 1fr);
+		align-items: center;
+		gap: 8px;
+		font-family: var(--font-mono);
+		font-size: 11px;
+	}
+
+	:global(.forecast-row strong) {
+		font-weight: 500;
+		color: var(--cf-text);
+	}
+
+	:global(.decision-card code) {
+		font-family: var(--font-mono);
+	}
+</style>

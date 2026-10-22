@@ -46,20 +46,51 @@ The browser samples frames from `getUserMedia()`, POSTs them to this route at ~1
 
 ## Features
 
-Four views, all served by the same Worker, each showing a different Workers AI pattern:
+Seven views, all served by the same Worker, each showing a different Workers AI pattern:
 
 | Route | View | What it shows | Models |
 | --- | --- | --- | --- |
 | `/` | **Live object detection** | One inference per sampled frame; boxes + confidence drawn over the feed | `@cf/facebook/detr-resnet-50` |
 | `/zone` | **Zone monitor** | Person boxes intersected with a user-drawn zone; logs entry/exit events (all in-browser state) | `@cf/facebook/detr-resnet-50` + browser geometry |
-| `/ppe` | **PPE compliance** | Fast person tracking + a slower vision-LLM that checks for a hardhat or baseball cap | DETR + selectable vision model |
+| `/ppe` | **PPE compliance** | Fast person tracking + a slower vision model that checks for a hardhat or baseball cap | DETR + selectable vision model |
+| `/decide` | **Decision dashboard** | Evaluates 1–64 typed `noul`, `choice`, and `score` questions in a single forward pass with calibrated probability bars, built-in presets (`webcam`, `safety`, `emoji`, `bin`), and a live JSON question editor (`E`) | `@cf/cloudflare/clef-flash` |
+| `/extract` | **Extraction dashboard** | Reads 1–32 typed fields (`text`, `number`, `date`, `time`, `datetime`, `duration`, `list`, `estimate`, `forecast`) from each frame with a confidence or p10–p90 interval per answer, built-in presets (`scene`, `site`), and a live JSON field editor (`E`) | `@cf/cloudflare/clairic` (preview) |
+| `/extract-decide` | **Extract + Decide** | Recipes that chain both models on one frame: Clef Flash gates and routes, Clairic measures, the Worker does the maths. *Drink Check* (hydration / caffeine / standard drinks), *Finger Math*, *Tech Neck*, *Watch Reader* | `@cf/cloudflare/clef-flash` + `@cf/cloudflare/clairic` |
 | `/architecture` | **Reference architecture** | A static diagram and per-route flow breakdown | — |
 
-The `/ppe` view lets you switch between three multimodal models to compare quality, latency, and cost:
+The `/ppe` view lets you switch between four multimodal models to compare quality, latency, and cost:
 
-- `@cf/meta/llama-3.2-11b-vision-instruct`
-- `@cf/llava-hf/llava-1.5-7b-hf`
-- `@cf/google/gemma-4-26b-a4b-it`
+- `@cf/meta/llama-3.2-11b-vision-instruct` (`?model=llama`)
+- `@cf/llava-hf/llava-1.5-7b-hf` (`?model=llava`)
+- `@cf/google/gemma-4-26b-a4b-it` (`?model=gemma`)
+- `@cf/cloudflare/clef-flash` (`?model=clef-flash`)
+
+The `/decide` view and `POST /api/decide` endpoint evaluate live frames against typed decision schemas using `@cf/cloudflare/clef-flash`:
+
+- **`noul`**: binary probability (`P(yes)` in `[0, 1]`) with a Yes/No verdict badge and probability meter.
+- **`choice`**: multi-class distribution (2–255 options) with the winning choice, confidence, and sorted option probability bars.
+- **`score`**: ordered rubric (2–10 levels) with probability-weighted expected score, active legend label, confidence, and per-level probability bars.
+- **Safety & Field** (`?preset=safety`): a site safety check against a stated rule ("hardhat and hi-vis vest required"). Clef Flash answers person in view, headwear, hi-vis vest, visible hazard, and a safety level whose options name what you can see: 🟢 All clear · 🟡 Check (can't tell) · 🟠 Violation (missing a hardhat or vest) · 🔴 Stop work (missing both, or near a hazard). The view shows the level large with a checklist of what it saw (⛑️ Hardhat ❌ baseball cap 82% · 🦺 Hi-vis vest ✅ 91%). At a booth everyone starts 🟠; put on a hardhat and vest to go 🟢.
+- **Emoji** (`?preset=emoji`): Clef Flash checks a face is visible and picks the emoji that best matches it from 70 options in one call. Each option's description leads with the emoji and says what the face looks like (`src/lib/emoji-faces.ts`). The view shows the winning emoji large, with the next three and their probabilities. Expressions only: no one is identified and nothing is stored.
+- **Which Bin?** (`?preset=bin`): hold up something you'd throw away. One Clef Flash call, four questions: is an item shown, which of 17 common booth items it is, which bin (compost, recycling, landfill, special drop-off) its main body goes in, and which bin its lid or cap goes in, under typical US curbside rules. Other parts with an obvious bin (a cup's cardboard sleeve, a badge's paper insert) come from a fixed table in `src/lib/bins.ts`, marked "rule". The view lists the picked item's parts (coffee cup: lid → landfill, cup → landfill, sleeve → recycling) and shows only the relevant question cards. Empty frames show "Hold up something you'd throw away." About 1 s and 2,100 input tokens per frame.
+- **Presets & custom JSON**: switch between `Webcam & Gestures` (`?preset=webcam`), `Safety & Field` (`?preset=safety`), `Emoji` (`?preset=emoji`), and `Which Bin?` (`?preset=bin`), or open the live question editor (`Edit questions (E)` or press `E`) to edit `state` and `questions` JSON directly in the browser (persisted in `localStorage`).
+
+The `/extract` view and `POST /api/extract` endpoint read typed values from live frames against a **Field Schema** using `@cf/cloudflare/clairic` (preview):
+
+- **Scalars** (`text`, `number`, `date`, `time`, `datetime`, `duration`): the value, or *Not found* with the model's best guess and `P(not present)`, plus a confidence bar.
+- **`list`**: the extracted items as chips (`items` is `text`, `number`, or `date`).
+- **`estimate`**: the median with its p10–p90 interval drawn across the field's `min`–`max` range.
+- **`forecast`**: one median and interval per step (`horizon`, `interval`).
+- **Presets & custom JSON**: switch between `Webcam & Objects` (`?preset=scene`) and `Site & Gauges` (`?preset=site`), or open the live field editor (`Edit fields (E)` or press `E`) to edit `state` and `fields` JSON (persisted in `localStorage`). An inline schema replaces the preset; it is never merged.
+- **One validator**: the Field Schema rules live in `src/lib/field-schema.ts`. The API route and the bundled browser editor both import it, so the editor rejects exactly what the API would.
+
+The `/extract-decide` view and `POST /api/extract-decide` endpoint run **recipes** that combine both models (`src/lib/extract-decide.ts`):
+
+- **Gate → measure**: Clef Flash answers the recipe's questions first. If there is nothing to measure, Clairic is never called; otherwise the answers pick the Field Schema. *Drink Check* routes by drink type to hydration (% of a daily goal), caffeine (weighted by Clef Flash's drink-type probabilities), or alcohol (ABV from the label when readable, else a typical range → standard drinks).
+- **Finger Math**: Clef Flash checks two hands are raised; Clairic counts the fingers on the right and left hands (plain integer counts, tuned live) and gives its own product; the Worker multiplies and shows "Clairic said X" if Clairic's product disagrees.
+- **Tech Neck**: Clef Flash checks a person is in view and classifies posture; Clairic estimates forward head tilt (0–60°); the Worker converts tilt to approximate neck load from published modelling (Hansraj, 2014). Just for fun, not medical advice.
+- **Watch Reader**: analog watches (the challenge) or phone lock screens. Clef Flash classifies analog vs digital, spots a seconds hand (the thinnest of three, kept out of the reading), finds the crown (so a rotated watch still works: 12 is a quarter-turn counter-clockwise from the crown), and gives each hand's rough image position. Clairic reads the time directly and measures both hands' angles. The Worker rotates everything onto the dial (`src/lib/clock.ts`), takes **minutes** from whichever Clairic reading agrees best with Clef Flash's minute-hand position, and the **hour** from Clef Flash's hour-hand position plus those minutes (so a hand nearest 4 at :50 reads 3, the classic "3:50 trap"). The browser compares the reading with its own clock, which never goes into the models' input: "4 min fast", "still on home time? (+3 h)", or "stopped, or never set?". A dial diagram shows the final hands over Clairic's measured ranges. Captured at 1280×720.
+- **Settings**: only Drink Check shows one, the daily water goal (2.0–3.7 L) behind its hydration %. Standard drinks use the US definition (14 g of alcohol), are informational only, and nothing estimates impairment.
 
 ## Architecture
 
@@ -67,7 +98,7 @@ The `/ppe` view lets you switch between three multimodal models to compare quali
 graph TD
     subgraph Browser["Browser (your device)"]
         Cam["Camera + canvas<br/>samples JPEG frames"]
-        Overlay["Canvas overlay<br/>draws boxes &amp; labels"]
+        Overlay["Canvas overlay &amp; decision cards<br/>draws boxes, labels &amp; probabilities"]
     end
 
     subgraph CF["Cloudflare"]
@@ -75,23 +106,38 @@ graph TD
         subgraph Worker["Astro on Workers (SSR)"]
             Detect["/api/detect"]
             PPE["/api/ppe"]
+            Decide["/api/decide"]
+            Extract["/api/extract"]
+            XD["/api/extract-decide"]
         end
         subgraph WAI["Workers AI binding (env.AI)"]
             DETR["DETR ResNet-50<br/>object detection"]
             VLM["Llama 3.2 Vision /<br/>LLaVA / Gemma 4"]
+            Clef["Clef Flash<br/>structured decisions"]
+            Clairic["Clairic<br/>typed extraction"]
         end
     end
 
-    Cam -->|"POST image/jpeg"| Access
+    Cam -->|"POST image/jpeg or JSON"| Access
     Access --> Detect
     Access --> PPE
+    Access --> Decide
+    Access --> Extract
+    Access --> XD
     Detect --> DETR
     PPE --> VLM
+    PPE --> Clef
+    Decide --> Clef
+    Extract --> Clairic
+    XD --> Clef
+    XD --> Clairic
     DETR -->|"detections JSON"| Overlay
     VLM -->|"assessment JSON"| Overlay
+    Clef -->|"probabilities / assessment JSON"| Overlay
+    Clairic -->|"typed values JSON"| Overlay
 ```
 
-**Key design decisions.** Expensive work (inference) is pushed to the `AI` binding while the browser keeps capture and overlay state lightweight. App-specific state — zones, event logs, model choice — is tab-local, so the demo does not require you to create a database, KV namespace, or storage bucket before deploying. Camera frames are sampled and downscaled in the browser to keep payloads small and inference cheap. Cloudflare Access is shown as an **optional** front door, not a requirement.
+**Key design decisions.** Expensive work (inference) is pushed to the `AI` binding while the browser keeps capture and overlay state lightweight. App-specific state — zones, event logs, model choice, custom Clef question and Clairic field schemas — is tab-local, so the demo does not require you to create a database, KV namespace, or storage bucket before deploying. Camera frames are sampled and downscaled in the browser to keep payloads small and inference cheap. Cloudflare Access is shown as an **optional** front door, not a requirement.
 
 ## Tech stack
 
@@ -123,7 +169,10 @@ npm install
 # 3. Authenticate Wrangler with your Cloudflare account
 npx wrangler login
 
-# 4. Start the dev server
+# 4. Run the offline unit tests (no Cloudflare credentials required)
+npm test
+
+# 5. Start the dev server
 npm run dev
 ```
 
@@ -157,11 +206,14 @@ The camera requires a **secure context (HTTPS)**, which `workers.dev` provides a
 
 1. The browser starts `getUserMedia()` and renders the camera stream into a `<video>` element.
 2. A hidden `<canvas>` samples frames at ~1.5 fps, downscales them to 640×360, and encodes a compressed JPEG.
-3. The frame is POSTed as a raw `image/*` body to an Astro API route (`/api/detect` or `/api/ppe`).
-4. The route calls the Workers AI binding — e.g. `env.AI.run('@cf/facebook/detr-resnet-50', { image })` — and returns JSON.
-5. The browser scales the model's coordinates back to the on-screen video size and draws boxes/labels on a second `<canvas>` overlay.
+3. The frame is POSTed as a raw `image/*` body (or `application/json` with custom schemas on `/decide` and `/extract`) to an Astro API route (`/api/detect`, `/api/ppe`, `/api/decide`, or `/api/extract`).
+4. The route calls the Workers AI binding — e.g. `env.AI.run('@cf/facebook/detr-resnet-50', { image })` or `env.AI.run('@cf/cloudflare/clef-flash', { model: 'clef-flash', state, images, questions })` — and returns JSON.
+5. The browser scales the model's coordinates back to the on-screen video size and draws boxes/labels on a second `<canvas>` overlay (or renders live probability cards on `/decide` and typed value cards on `/extract`).
 6. `/zone` intersects person boxes with a normalized, locally-stored zone and logs debounced entry/exit events.
-7. `/ppe` runs two loops in parallel: a fast DETR loop for responsive boxes and a slower vision-LLM loop (every ~3s) for headwear compliance.
+7. `/ppe` runs two loops in parallel: a fast DETR loop for responsive boxes and a slower vision-model loop (every ~3s) for headwear compliance using Llama Vision, LLaVA, Gemma 4, or Clef Flash.
+8. `/decide` evaluates each sampled frame against 1–64 typed `noul`, `choice`, and `score` questions in a single forward pass with `@cf/cloudflare/clef-flash` and zero output-token generation.
+9. `/extract` reads each sampled frame (~0.8 fps) against 1–32 typed fields with `@cf/cloudflare/clairic`, returning values with confidences and estimate intervals.
+10. `/extract-decide` runs a recipe per frame (~0.7 fps): Clef Flash gates and routes, Clairic measures, and the Worker combines them into one result.
 
 > **Llama Vision one-time license.** `@cf/meta/llama-3.2-11b-vision-instruct` requires a one-time license agreement per Cloudflare account. The `/api/ppe` route handles this automatically: if the first request returns a license error, it sends `{ prompt: "agree" }` and retries. The very first Llama call after deploy may therefore be slightly slower.
 
@@ -214,8 +266,18 @@ cloudflare-workers-ai-vision-demo/
 │   │   ├── architecture.astro   # `/architecture` reference diagram
 │   │   └── api/
 │   │       ├── detect.ts        # POST /api/detect → DETR object detection
-│   │       └── ppe.ts           # POST /api/ppe → selectable vision LLM
-│   ├── components/              # Hero, Header/Footer/NavTabs, and the 3 demo widgets
+│   │       ├── ppe.ts           # POST /api/ppe → selectable vision model / Clef Flash
+│   │       ├── decide.ts        # POST /api/decide → @cf/cloudflare/clef-flash decisions
+│   │       ├── extract.ts       # POST /api/extract → @cf/cloudflare/clairic extraction
+│   │       └── extract-decide.ts # POST /api/extract-decide → Clef Flash + Clairic recipes
+│   ├── components/              # Hero, Header/Footer/NavTabs, and the 6 demo widgets
+│   ├── lib/api-helpers.ts       # Shared AI runner seam, image normalization, JSON responses
+│   ├── lib/field-schema.ts      # Field Schema presets + validator (shared by API and browser)
+│   ├── lib/extract-decide.ts    # Extract + Decide recipes, gating/routing, result maths
+│   ├── lib/emoji-faces.ts       # 70 face emoji + descriptions for the Decide Emoji preset
+│   ├── lib/clock.ts             # Watch Reader geometry: hand angles → time, clock comparison
+│   ├── lib/bins.ts              # Which Bin? items, parts, bins, and the one-call question set
+│   ├── test/                    # Hermetic offline contract tests (`npm test`)
 │   ├── layouts/Layout.astro     # Shared HTML shell + scroll-reveal + theming
 │   └── styles/                  # Design tokens + base styles
 ├── public/                      # favicon + the architecture SVG
@@ -239,6 +301,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Acknowledgments
 
-- [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) and the [DETR](https://developers.cloudflare.com/workers-ai/models/detr-resnet-50/) / Llama Vision / LLaVA / Gemma models.
+- [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) and the [DETR](https://developers.cloudflare.com/workers-ai/models/detr-resnet-50/), [Clef Flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/), Llama Vision, LLaVA, and Gemma models.
 - [Astro](https://astro.build) and the [`@astrojs/cloudflare`](https://docs.astro.build/en/guides/integrations-guide/cloudflare/) adapter.
 - Scaffolded with [`create-cloudflare`](https://developers.cloudflare.com/workers/get-started/quickstarts/).

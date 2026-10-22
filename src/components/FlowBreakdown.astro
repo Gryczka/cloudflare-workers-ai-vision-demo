@@ -2,14 +2,15 @@
 /**
  * FlowBreakdown — static, side-by-side comparison of how each route turns the
  * same camera stream into a different product (live detection, zone monitor,
- * PPE monitor). Presentational only; used on the architecture page.
+ * PPE monitor, structured decisions, typed extraction, and both combined). Presentational only; used on the
+ * architecture page.
  */
 ---
 
 <section class="flow-breakdown container" aria-labelledby="flow-breakdown-title">
 	<div class="section-heading">
 		<p class="eyebrow">Route by route</p>
-		<h2 id="flow-breakdown-title">The same camera stream, three different products</h2>
+		<h2 id="flow-breakdown-title">The same camera stream, six different products</h2>
 	</div>
 
 	<div class="flow-grid">
@@ -48,9 +49,48 @@
 			</div>
 			<div class="flow-pills stacked" aria-label="PPE monitor flow">
 				<div><span>camera</span><b>→</b><span>/api/detect</span><b>→</b><span>DETR</span></div>
-				<div><span>camera</span><b>→</b><span>/api/ppe</span><b>→</b><span>vision LLM</span></div>
+				<div><span>camera</span><b>→</b><span>/api/ppe</span><b>→</b><span>vision LLM / Clef Flash</span></div>
 			</div>
-			<p>Fast boxes stay responsive while a selectable vision model checks hardhats every few seconds.</p>
+			<p>Fast boxes stay responsive while a selectable vision model (Llama Vision, LLaVA, Gemma 4, or <code>@cf/cloudflare/clef-flash</code>) checks headwear every few seconds.</p>
+		</article>
+
+		<article class="flow-card corner-card decide-card scroll-reveal">
+			<span class="corner-top-right"></span>
+			<span class="corner-bottom-left"></span>
+			<div class="flow-top">
+				<span class="route-badge">/decide</span>
+				<h3>Decision dashboard</h3>
+			</div>
+			<div class="flow-pills" aria-label="Decision dashboard flow">
+				<span>camera</span><b>→</b><span>/api/decide</span><b>→</b><span>Clef Flash</span><b>→</b><span>probabilities</span>
+			</div>
+			<p><code>@cf/cloudflare/clef-flash</code> evaluates 1–64 typed <code>noul</code>, <code>choice</code>, and <code>score</code> questions in a single forward pass with calibrated probabilities and zero output tokens.</p>
+		</article>
+
+		<article class="flow-card corner-card extract-card scroll-reveal">
+			<span class="corner-top-right"></span>
+			<span class="corner-bottom-left"></span>
+			<div class="flow-top">
+				<span class="route-badge">/extract</span>
+				<h3>Extraction dashboard</h3>
+			</div>
+			<div class="flow-pills" aria-label="Extraction dashboard flow">
+				<span>camera</span><b>→</b><span>/api/extract</span><b>→</b><span>Clairic</span><b>→</b><span>typed values</span>
+			</div>
+			<p><code>@cf/cloudflare/clairic</code> reads 1–32 typed fields—counts, readings, dates, text, lists—with a confidence or p10–p90 interval on every value.</p>
+		</article>
+
+		<article class="flow-card corner-card xd-card scroll-reveal">
+			<span class="corner-top-right"></span>
+			<span class="corner-bottom-left"></span>
+			<div class="flow-top">
+				<span class="route-badge">/extract-decide</span>
+				<h3>Extract + Decide</h3>
+			</div>
+			<div class="flow-pills" aria-label="Extract + Decide flow">
+				<span>camera</span><b>→</b><span>Clef Flash</span><b>→</b><span>gate / route</span><b>→</b><span>Clairic</span><b>→</b><span>one answer</span>
+			</div>
+			<p>Clef Flash decides what is in frame and whether to measure; Clairic reads the values; the Worker does the maths (hydration, caffeine, standard drinks, finger products, watch geometry).</p>
 		</article>
 	</div>
 </section>
@@ -121,6 +161,18 @@
 		border-color: var(--cf-storage);
 	}
 
+	.decide-card:hover {
+		border-color: var(--cf-media);
+	}
+
+	.extract-card:hover {
+		border-color: var(--cf-sase);
+	}
+
+	.xd-card:hover {
+		border-color: var(--cf-orange);
+	}
+
 	.flow-top {
 		display: flex;
 		align-items: center;
@@ -146,6 +198,14 @@
 
 	.ppe-card .route-badge {
 		background: var(--cf-storage);
+	}
+
+	.decide-card .route-badge {
+		background: var(--cf-media);
+	}
+
+	.extract-card .route-badge {
+		background: var(--cf-sase);
 	}
 
 	h3 {
@@ -195,7 +255,19 @@
 		color: var(--cf-text-muted);
 	}
 
-	@media (min-width: 960px) {
+	p code {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		color: var(--cf-text);
+	}
+
+	@media (min-width: 720px) {
+		.flow-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (min-width: 1120px) {
 		.flow-grid {
 			grid-template-columns: repeat(3, 1fr);
 		}

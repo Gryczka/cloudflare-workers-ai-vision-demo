@@ -6,11 +6,12 @@
  * cap). Unlike `/api/detect` (which returns geometric boxes), this route asks
  * the model to *reason* about the scene and return structured JSON.
  *
- * Three models are selectable via the `?model=` query param so you can compare
+ * Four models are selectable via the `?model=` query param so you can compare
  * quality/latency/cost trade-offs:
  *   - llama → @cf/meta/llama-3.2-11b-vision-instruct (chat + image)
  *   - llava → @cf/llava-hf/llava-1.5-7b-hf           (image + single prompt)
  *   - gemma → @cf/google/gemma-4-26b-a4b-it          (chat + image)
+ *   - clef-flash → @cf/cloudflare/clef-flash (structured decisions)
  *
  * Because vision models are slower than DETR, the `/ppe` view calls this route
  * on a slow cadence (every few seconds) while DETR keeps person boxes snappy.
@@ -18,13 +19,18 @@
  * @see https://developers.cloudflare.com/workers-ai/
  */
 import type { APIRoute } from 'astro';
-import { env } from 'cloudflare:workers';
+import {
+	type AIRunner,
+	arrayBufferToDataUrl,
+	defaultRunAI,
+	json,
+} from '../../lib/api-helpers.ts';
 
 // Server-render on every request (this is a dynamic API endpoint, not a page).
 export const prerender = false;
 
 /** Selectable model keys exposed to the client via `?model=`. */
-type ModelKey = 'llama' | 'llava' | 'gemma';
+type ModelKey = 'llama' | 'llava' | 'gemma' | 'clef-flash';
 /** Selectable detection targets exposed to the client via `?target=`. */
 type TargetKey = 'hardhat' | 'baseball-cap';
 
@@ -46,6 +52,7 @@ const MODELS: Record<ModelKey, string> = {
 	llama: '@cf/meta/llama-3.2-11b-vision-instruct',
 	llava: '@cf/llava-hf/llava-1.5-7b-hf',
 	gemma: '@cf/google/gemma-4-26b-a4b-it',
+	'clef-flash': '@cf/cloudflare/clef-flash',
 };
 
 /** Per-target prompt vocabulary so the same code can check different headwear. */
@@ -79,30 +86,14 @@ Use false when ${target.item} is not visible or cannot be confidently confirmed.
 Valid positive examples include: ${target.examples}.
 Do not count other headwear as compliant unless it clearly matches ${target.item}.`;
 
-/** JSON response helper (see the matching helper in detect.ts). */
-const json = (body: unknown, init?: ResponseInit) =>
-	new Response(JSON.stringify(body), {
-		...init,
-		headers: {
-			'content-type': 'application/json; charset=utf-8',
-			'cache-control': 'no-store',
-			...init?.headers,
-		},
-	});
-
-/**
- * Thin wrapper around `env.AI.run`. The Workers AI types are per-model and very
- * strict; this demo intentionally passes model-specific input shapes, so we
- * cast to a loose signature to keep one call site for all three models.
- */
-const runAI = (model: string, input: unknown) =>
-	(env.AI.run as unknown as (model: string, input: unknown) => Promise<unknown>)(model, input);
-
 /**
  * Handle a PPE assessment request.
  *
+ * Accepts an injectable `runAI` function (defaulting to the Workers AI binding)
+ * so the full HTTP request-to-response contract can be tested offline.
+ *
  * Query params:
- *   - `model`  one of `llama` | `llava` | `gemma` (defaults to `llama`)
+ *   - `model`  one of `llama` | `llava` | `gemma` | `clef-flash` (defaults to `llama`)
  *   - `target` one of `hardhat` | `baseball-cap` (defaults to `hardhat`)
  *
  * Returns `{ assessment, raw, inferenceMs, bytes, model, modelKey, targetKey,
@@ -110,17 +101,23 @@ const runAI = (model: string, input: unknown) =>
  * model's output could not be parsed); `raw` is the model's raw text for
  * debugging in the UI.
  */
-export const POST: APIRoute = async ({ request, url }) => {
+export async function handlePPE(
+	{ request, url }: { request: Request; url?: URL },
+	runAI: AIRunner = defaultRunAI
+): Promise<Response> {
 	const contentType = request.headers.get('content-type') ?? '';
 	if (!contentType.startsWith('image/')) {
 		return json({ error: 'Send a raw image/* request body.' }, { status: 415 });
 	}
 
+	const resolvedUrl = url ?? new URL(request.url);
+
 	// Resolve and validate the requested model/target, falling back to defaults
 	// if the client sends something unknown.
-	const requestedModel = url.searchParams.get('model') as ModelKey | null;
-	const modelKey: ModelKey = requestedModel && requestedModel in MODELS ? requestedModel : 'llama';
-	const requestedTarget = url.searchParams.get('target') as TargetKey | null;
+	const requestedModel = resolvedUrl.searchParams.get('model') as ModelKey | null;
+	const modelKey: ModelKey =
+		requestedModel && requestedModel in MODELS ? requestedModel : 'llama';
+	const requestedTarget = resolvedUrl.searchParams.get('target') as TargetKey | null;
 	const targetKey: TargetKey = requestedTarget && requestedTarget in TARGETS ? requestedTarget : 'hardhat';
 	const target = TARGETS[targetKey];
 	const model = MODELS[modelKey];
@@ -131,13 +128,34 @@ export const POST: APIRoute = async ({ request, url }) => {
 	}
 
 	// Two encodings of the same image: a byte array (LLaVA) and a base64 data
-	// URL (Llama / Gemma chat models). We compute both up front.
+	// URL (Llama / Gemma / Clef Flash). We compute both up front.
 	const imageBytes = [...new Uint8Array(image)];
-	const imageDataUrl = `data:${contentType};base64,${arrayBufferToBase64(image)}`;
+	const imageDataUrl = arrayBufferToDataUrl(image, contentType);
 	const started = Date.now();
 
 	try {
-		const rawResult = await runPPEModel(modelKey, model, imageBytes, imageDataUrl, makeUserPrompt(target));
+		if (modelKey === 'clef-flash') {
+			const clefResult = await runClefPPE(runAI, model, imageDataUrl, target);
+			return json({
+				assessment: clefResult.assessment,
+				raw: clefResult.raw,
+				inferenceMs: Date.now() - started,
+				bytes: image.byteLength,
+				model,
+				modelKey,
+				targetKey,
+				target: target.label,
+			});
+		}
+
+		const rawResult = await runPPEModel(
+			runAI,
+			modelKey,
+			model,
+			imageBytes,
+			imageDataUrl,
+			makeUserPrompt(target)
+		);
 		const raw = extractText(rawResult);
 		const assessment = parseAssessment(raw);
 
@@ -162,7 +180,9 @@ export const POST: APIRoute = async ({ request, url }) => {
 			{ status: 500 }
 		);
 	}
-};
+}
+
+export const POST: APIRoute = ({ request, url }) => handlePPE({ request, url });
 
 /**
  * Run the selected model with the input shape it expects.
@@ -175,6 +195,7 @@ export const POST: APIRoute = async ({ request, url }) => {
  * that, POST `{ prompt: 'agree' }` to accept, then retry the original request.
  */
 async function runPPEModel(
+	runAI: AIRunner,
 	modelKey: ModelKey,
 	model: string,
 	imageBytes: number[],
@@ -211,21 +232,106 @@ async function runPPEModel(
 	return runAI(model, input);
 }
 
+const CLEF_LOCATIONS: Record<string, string> = {
+	left: 'left foreground',
+	center: 'center foreground',
+	right: 'right foreground',
+	background: 'background',
+	none: 'visible person',
+};
+
 /**
- * Convert an ArrayBuffer to a base64 string in fixed-size chunks.
- *
- * We chunk because `String.fromCharCode(...bytes)` spreads every byte as a
- * function argument; on a full-frame image that can blow the call-stack arg
- * limit. 8 KB chunks stay well under it.
+ * Run `@cf/cloudflare/clef-flash` for PPE compliance and deterministically
+ * synthesize a `PPEAssessment` from the structured decision answers.
  */
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-	let binary = '';
-	const bytes = new Uint8Array(buffer);
-	const chunkSize = 8192;
-	for (let i = 0; i < bytes.length; i += chunkSize) {
-		binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+async function runClefPPE(
+	runAI: AIRunner,
+	model: string,
+	imageDataUrl: string,
+	target: (typeof TARGETS)[TargetKey]
+): Promise<{ assessment: PPEAssessment; raw: string }> {
+	const rawResult = (await runAI(model, {
+		model: 'clef-flash',
+		state: `Evaluate this live camera frame for ${target.label} compliance. Valid positive examples: ${target.examples}.`,
+		images: [imageDataUrl],
+		questions: {
+			person_count: {
+				type: 'choice',
+				instructions: 'How many people are visible in the frame?',
+				criteria: {
+					'0': 'No people visible',
+					'1': 'Exactly one person visible',
+					'2': 'Two people visible',
+					'3+': 'Three or more people visible',
+				},
+			},
+			all_wearing_target: {
+				type: 'noul',
+				instructions: `Are all visible people clearly wearing ${target.item}?`,
+				criteria: {
+					true: `Yes, every visible person is wearing ${target.item}`,
+					false: `No, at least one person is missing ${target.item} or no people are visible`,
+				},
+			},
+			any_wearing_target: {
+				type: 'noul',
+				instructions: `Is at least one visible person clearly wearing ${target.item}?`,
+				criteria: {
+					true: `Yes, at least one person is wearing ${target.item}`,
+					false: `No visible person is wearing ${target.item}`,
+				},
+			},
+			primary_location: {
+				type: 'choice',
+				instructions: 'Where is the primary visible person located in the frame?',
+				criteria: {
+					left: 'Left side of the frame',
+					center: 'Center of the frame',
+					right: 'Right side of the frame',
+					background: 'Background or far distance',
+					none: 'No person visible',
+				},
+			},
+		},
+	})) as Record<string, unknown> | null;
+
+	const answers = (rawResult?.answers ?? {}) as Record<string, Record<string, unknown>>;
+	const countChoice = String(answers.person_count?.choice ?? '0');
+	const personCount =
+		countChoice === '3+' ? 3 : Math.max(0, Number.parseInt(countChoice, 10) || 0);
+
+	const allProb = Number(answers.all_wearing_target?.noul ?? 0);
+	const anyProb = Number(answers.any_wearing_target?.noul ?? 0);
+	const allWearing = allProb >= 0.5;
+	const anyWearing = anyProb >= 0.5 || allWearing;
+
+	const locationChoice = String(answers.primary_location?.choice ?? 'center');
+	const primaryLocation = CLEF_LOCATIONS[locationChoice] ?? 'visible person';
+
+	const persons: PPEAssessment['persons'] = [];
+	for (let index = 0; index < personCount; index += 1) {
+		const wearingTarget = allWearing ? true : anyWearing && index === 0;
+		const location = index === 0 ? primaryLocation : `person ${index + 1}`;
+		persons.push({
+			wearing_target: wearingTarget,
+			location,
+		});
 	}
-	return btoa(binary);
+
+	return {
+		assessment: {
+			person_count: personCount,
+			persons,
+		},
+		raw: JSON.stringify(
+			{
+				answers: rawResult?.answers ?? {},
+				usage: rawResult?.usage ?? null,
+			},
+			null,
+			2
+		),
+	};
 }
 
 /**

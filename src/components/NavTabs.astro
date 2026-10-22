@@ -1,6 +1,6 @@
 ---
 /**
- * NavTabs — primary navigation between the four views. Highlights the active
+ * NavTabs — primary navigation between the seven views. Highlights the active
  * tab by comparing the current pathname (trailing slash stripped) to each href.
  */
 const pathname = Astro.url.pathname.replace(/\/$/, '') || '/';
@@ -9,6 +9,9 @@ const tabs = [
 	{ href: '/', label: 'Live' },
 	{ href: '/zone', label: 'Zone' },
 	{ href: '/ppe', label: 'PPE' },
+	{ href: '/decide', label: 'Decide' },
+	{ href: '/extract', label: 'Extract' },
+	{ href: '/extract-decide', label: 'Extract + Decide' },
 	{ href: '/architecture', label: 'Architecture' },
 ];
 ---

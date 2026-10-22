@@ -1,0 +1,48 @@
+---
+/** `/extract-decide` — Extract + Decide recipes combining Clef Flash and Clairic. */
+import ExtractDecideDemo from '../components/ExtractDecideDemo.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import Hero from '../components/Hero.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Layout from '../layouts/Layout.astro';
+
+const steps = [
+	{
+		accent: 'compute',
+		title: 'Decide what it is',
+		body: 'Clef Flash answers typed questions about the frame: is there a drink and what kind, are two hands raised, is a watch in view. Its answers gate the frame and route it to the right measurement.',
+	},
+	{
+		accent: 'ai',
+		title: 'Measure what matters',
+		body: 'Clairic reads the values for that route (container size, fill level, label ABV, finger counts, head tilt, watch hands) with a confidence or p10–p90 interval on each.',
+	},
+	{
+		accent: 'media',
+		title: 'Combine into one answer',
+		body: 'The Worker does the checkable maths (standard drinks, caffeine weighted by drink-type probabilities, hydration against a daily goal, finger products, watch geometry) and returns one result card with both stages shown underneath.',
+	},
+] as const;
+---
+
+<Layout>
+	<Header />
+	<main>
+		<Hero
+			kicker="Clef Flash + Clairic on Workers AI"
+			title="Decide what it is, then measure it"
+			subtitle="Chain Cloudflare's decision model and extraction model on the same camera frame: one picks the route, the other reads the numbers, and the Worker turns both into one answer."
+			model="@cf/cloudflare/clef-flash + @cf/cloudflare/clairic"
+			meta="1–2 model calls per frame · Clef Flash gates, Clairic measures"
+			cta={{ label: 'Open Extract + Decide', href: '#demo' }}
+		/>
+		<ExtractDecideDemo />
+		<HowItWorks
+			title="Two models, one answer"
+			subtitle="Clef Flash decides and routes; Clairic measures; the Worker does the maths."
+			steps={steps}
+		/>
+	</main>
+	<Footer />
+</Layout>

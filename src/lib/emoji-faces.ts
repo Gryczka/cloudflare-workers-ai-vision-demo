@@ -1,0 +1,87 @@
+/**
+ * Face emoji for the Decide "Emoji" preset: Clef Flash picks the emoji
+ * directly from one `choice` question.
+ *
+ * Option keys are plain text (Clef Flash option IDs); each option's
+ * description starts with the emoji followed by what the face looks like,
+ * so the model sees both and the UI can read the emoji back from the
+ * winning option's description.
+ */
+
+export const FACE_EMOJI: Record<string, [emoji: string, looks: string]> = {
+	slightly_smiling: ['🙂', 'slight, closed-mouth smile'],
+	grinning: ['😀', 'big open-mouth grin'],
+	beaming: ['😁', 'beaming grin showing teeth, eyes smiling'],
+	smiling_eyes: ['😄', 'open-mouth smile with smiling, squinting eyes'],
+	grinning_squinting: ['😆', 'laughing with eyes squeezed shut'],
+	tears_of_joy: ['😂', 'laughing so hard it looks like crying'],
+	big_eyes_smile: ['😃', 'wide-eyed, excited open smile'],
+	star_struck: ['🤩', 'amazed and thrilled, eyes wide with delight'],
+	smiling_hearts: ['🥰', 'warm, affectionate smile'],
+	heart_eyes: ['😍', 'adoring, smitten look'],
+	blushing: ['😊', 'shy smile with rosy cheeks'],
+	relieved: ['😌', 'calm and content, eyes gently closed'],
+	halo: ['😇', 'innocent, angelic smile'],
+	hugging: ['🤗', 'smiling with arms or hands open for a hug'],
+	winking: ['😉', 'winking one eye with a smile'],
+	winking_tongue: ['😜', 'winking with tongue out'],
+	tongue: ['😛', 'tongue sticking out, eyes open'],
+	squinting_tongue: ['😝', 'tongue out with eyes squeezed shut'],
+	zany: ['🤪', 'goofy, wild face with tongue out'],
+	kissing: ['😗', 'puckered lips'],
+	blowing_kiss: ['😘', 'blowing a kiss'],
+	smirking: ['😏', 'sly one-sided smirk'],
+	cool: ['😎', 'confident, too-cool expression'],
+	yum: ['😋', 'licking lips, savoring'],
+	drooling: ['🤤', 'drooling or mouth hanging open with desire'],
+	saluting: ['🫡', 'hand raised to the brow in a salute'],
+	hushed: ['😯', 'mildly surprised, small open mouth'],
+	open_mouth: ['😮', 'surprised, mouth open'],
+	astonished: ['😲', 'shocked, eyes and mouth wide open'],
+	dizzy: ['😵', 'stunned or dazed'],
+	mind_blown: ['🤯', 'mind blown, hands on head in amazement'],
+	slightly_frowning: ['🙁', 'slight frown'],
+	frowning: ['☹️', 'clear frown, corners of mouth turned down'],
+	persevering: ['😣', 'scrunched face, struggling or straining'],
+	pensive: ['😔', 'downcast, sad eyes looking down'],
+	crying: ['😢', 'sad with a tear'],
+	sobbing: ['😭', 'crying hard'],
+	holding_back_tears: ['🥹', 'touched, eyes welling up'],
+	pleading: ['🥺', 'pleading puppy-dog eyes'],
+	angry: ['😠', 'angry scowl'],
+	enraged: ['😡', 'furious, red-faced'],
+	huffing: ['😤', 'huffing with flared nostrils'],
+	unamused: ['😒', 'unimpressed side-eye'],
+	eye_roll: ['🙄', 'rolling eyes upward'],
+	confounded: ['😖', 'scrunched up in distaste'],
+	nauseated: ['🤢', 'queasy, about to be sick'],
+	vomiting: ['🤮', 'grossed out to the extreme'],
+	worried: ['😟', 'worried, brows raised in concern'],
+	fearful: ['😨', 'frightened'],
+	screaming: ['😱', 'screaming in fear, hands on cheeks'],
+	grimacing: ['😬', 'awkward grimace, teeth clenched'],
+	anxious_sweat: ['😰', 'anxious and sweating'],
+	sweat_smile: ['😅', 'nervous laugh, relieved but awkward'],
+	flushed: ['😳', 'embarrassed, wide-eyed and flushed'],
+	thinking: ['🤔', 'thinking, hand on chin'],
+	monocle: ['🧐', 'scrutinizing closely, one eye narrowed'],
+	raised_eyebrow: ['🤨', 'skeptical, one eyebrow raised'],
+	confused: ['😕', 'confused, mouth crooked'],
+	spiral_eyes: ['😵‍💫', 'dizzy and disoriented'],
+	facepalm: ['🤦', 'hand on forehead in a facepalm'],
+	shushing: ['🤫', 'finger on lips, shushing'],
+	hand_over_mouth: ['🤭', 'giggling behind a hand'],
+	open_eyes_hand_mouth: ['🫢', 'gasping with a hand over the mouth'],
+	peeking: ['🫣', 'peeking through fingers'],
+	zipper_mouth: ['🤐', 'lips pressed shut, sealed'],
+	sleepy: ['😪', 'sleepy, droopy eyes'],
+	yawning: ['🥱', 'yawning'],
+	sleeping: ['😴', 'eyes closed, asleep'],
+	neutral: ['😐', 'neutral, expressionless'],
+	expressionless: ['😑', 'flat, eyes closed, blank'],
+};
+
+/** Clef Flash `choice` criteria: `{ key: "😂 laughing so hard it looks like crying" }`. */
+export function faceEmojiCriteria(): Record<string, string> {
+	return Object.fromEntries(Object.entries(FACE_EMOJI).map(([key, [emoji, looks]]) => [key, `${emoji} ${looks}`]));
+}

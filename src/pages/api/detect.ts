@@ -13,10 +13,8 @@
  * @see https://developers.cloudflare.com/workers-ai/models/detr-resnet-50/
  */
 import type { APIRoute } from 'astro';
-// `env` is the Workers runtime environment. `env.AI` is the Workers AI binding
-// declared in wrangler.jsonc. Importing it from 'cloudflare:workers' lets this
-// API route call Workers AI without threading `env` through Astro's context.
 import { env } from 'cloudflare:workers';
+import { json } from '../../lib/api-helpers.ts';
 
 // Render this route on every request (server-side). Without this, Astro would
 // try to prerender it at build time, which is wrong for a dynamic API endpoint.
@@ -42,23 +40,6 @@ type Detection = {
 		ymax: number;
 	};
 };
-
-/**
- * Build a JSON `Response` with sensible defaults for an API endpoint.
- * `no-store` keeps live detection frames from being cached anywhere.
- *
- * @param body - Any JSON-serializable value.
- * @param init - Optional response init (status, extra headers).
- */
-const json = (body: unknown, init?: ResponseInit) =>
-	new Response(JSON.stringify(body), {
-		...init,
-		headers: {
-			'content-type': 'application/json; charset=utf-8',
-			'cache-control': 'no-store',
-			...init?.headers,
-		},
-	});
 
 /**
  * Handle a detection request.

@@ -26,6 +26,7 @@
 			<button class="model-button active" type="button" data-model-button data-model="llama">Llama Vision</button>
 			<button class="model-button" type="button" data-model-button data-model="llava">LLaVA</button>
 			<button class="model-button" type="button" data-model-button data-model="gemma">Gemma 4</button>
+			<button class="model-button" type="button" data-model-button data-model="clef-flash">Clef Flash</button>
 		</div>
 		<div class="target-selector" role="group" aria-label="Required headwear selector">
 			<span class="selector-label">Check for</span>
@@ -108,6 +109,7 @@
 			llama: '@cf/meta/llama-3.2-11b-vision-instruct',
 			llava: '@cf/llava-hf/llava-1.5-7b-hf',
 			gemma: '@cf/google/gemma-4-26b-a4b-it',
+			'clef-flash': '@cf/cloudflare/clef-flash',
 		};
 		const targets = {
 			'hardhat': {
@@ -160,6 +162,7 @@
 		let detectInFlight = null;
 		let ppeInFlight = null;
 		let facingMode = 'environment';
+		let preferredDeviceId = null;
 		let selectedModel = 'llama';
 		let selectedTarget = 'hardhat';
 		let people = [];
@@ -197,6 +200,50 @@
 			renderOverlay();
 		}
 
+		async function listVideoInputs() {
+			if (!navigator.mediaDevices?.enumerateDevices) return [];
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			const inputs = [];
+			for (const device of devices) {
+				if (device.kind !== 'videoinput' || !device.deviceId) continue;
+				if (inputs.some((item) => item.deviceId === device.deviceId)) continue;
+				inputs.push(device);
+			}
+			return inputs;
+		}
+
+		function activeVideoDeviceId() {
+			const track = stream?.getVideoTracks?.()[0];
+			return track?.getSettings?.().deviceId || preferredDeviceId;
+		}
+
+		function setSwitchCameraLabel(inputs) {
+			const current = inputs.find((device) => device.deviceId === activeVideoDeviceId());
+			const label = current?.label?.trim();
+			refs.switchButton.title = label ? `Switch camera (current: ${label})` : 'Switch camera';
+		}
+
+		async function openCameraStream() {
+			const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+			const attempts = [];
+			if (preferredDeviceId) {
+				attempts.push({ ...size, deviceId: { exact: preferredDeviceId } });
+				attempts.push({ deviceId: { exact: preferredDeviceId } });
+			}
+			attempts.push({ ...size, facingMode });
+
+			let lastError = null;
+			for (const video of attempts) {
+				try {
+					return await navigator.mediaDevices.getUserMedia({ audio: false, video });
+				} catch (error) {
+					lastError = error;
+					if (error?.name === 'NotAllowedError') throw error;
+				}
+			}
+			throw lastError;
+		}
+
 		async function startCamera() {
 			clearError();
 			if (!navigator.mediaDevices?.getUserMedia) {
@@ -211,15 +258,14 @@
 			setStatus('Requesting camera', 'pending');
 			refs.startButton.disabled = true;
 			try {
-				stream = await navigator.mediaDevices.getUserMedia({
-					audio: false,
-					video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-				});
+				stream = await openCameraStream();
+				preferredDeviceId = activeVideoDeviceId() || preferredDeviceId;
 				refs.video.srcObject = stream;
 				await refs.video.play();
 				refs.empty.hidden = true;
 				refs.pauseButton.disabled = false;
 				refs.switchButton.disabled = false;
+				setSwitchCameraLabel(await listVideoInputs());
 				sizeCanvases();
 				setStatus('Scanning', 'streaming');
 				startLoops();
@@ -272,7 +318,20 @@
 		}
 
 		async function switchCamera() {
-			facingMode = facingMode === 'environment' ? 'user' : 'environment';
+			let inputs = [];
+			try {
+				inputs = await listVideoInputs();
+			} catch {
+				inputs = [];
+			}
+			if (inputs.length > 1) {
+				const currentIndex = inputs.findIndex((device) => device.deviceId === activeVideoDeviceId());
+				const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % inputs.length : 1;
+				preferredDeviceId = inputs[nextIndex].deviceId;
+			} else {
+				facingMode = facingMode === 'environment' ? 'user' : 'environment';
+				preferredDeviceId = null;
+			}
 			stopCamera();
 			await startCamera();
 		}

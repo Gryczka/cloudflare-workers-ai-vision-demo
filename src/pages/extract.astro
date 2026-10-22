@@ -1,0 +1,48 @@
+---
+/** `/extract` — Structured multimodal extraction view powered by `@cf/cloudflare/clairic`. */
+import ExtractDemo from '../components/ExtractDemo.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import Hero from '../components/Hero.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Layout from '../layouts/Layout.astro';
+
+const steps = [
+	{
+		accent: 'compute',
+		title: 'Define typed fields',
+		body: 'Start from the Webcam & Objects or Site & Gauges preset, or edit the Field Schema live: counts as estimates, readings as numbers, tags as dates, and signage as text or lists.',
+	},
+	{
+		accent: 'ai',
+		title: 'Run Clairic on the frame',
+		body: 'Workers AI reads the sampled camera frame against every field, splitting large schemas across parallel passes, with no free-form text to parse.',
+	},
+	{
+		accent: 'media',
+		title: 'Read values with uncertainty',
+		body: 'Each answer carries a confidence or probability of being absent, and estimates return a median with a p10–p90 interval instead of a single guess.',
+	},
+] as const;
+---
+
+<Layout>
+	<Header />
+	<main>
+		<Hero
+			kicker="Structured multimodal extraction on Workers AI"
+			title="Turn live video into typed values"
+			subtitle="Read counts, gauge readings, dates, and text from camera frames against a typed Field Schema with Cloudflare's Clairic model—every answer comes with a confidence or an interval."
+			model="@cf/cloudflare/clairic"
+			meta="$0.10 per M input tokens · preview"
+			cta={{ label: 'Open the extraction dashboard', href: '#demo' }}
+		/>
+		<ExtractDemo />
+		<HowItWorks
+			title="Typed fields, calibrated values"
+			subtitle="Instead of prompting for prose and parsing numbers out of it, Clairic returns each field as a typed value with its own uncertainty."
+			steps={steps}
+		/>
+	</main>
+	<Footer />
+</Layout>

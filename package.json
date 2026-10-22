@@ -7,7 +7,8 @@
 	},
 	"scripts": {
 		"dev": "wrangler types && astro dev",
-		"build": "wrangler types && astro build",
+		"build": "wrangler types && CLOUDFLARE_VITE_FORCE_LOCAL=true astro build",
+		"test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
 		"preview": "npm run build && astro preview",
 		"astro": "astro",
 		"generate-types": "wrangler types",

@@ -12,12 +12,12 @@ const steps = [
 	{
 		accent: 'compute',
 		title: 'Push expensive work to Workers AI',
-		body: 'DETR and the selectable vision models run behind an AI binding while the browser keeps capture and overlay state lightweight.',
+		body: 'DETR, generative vision models, and @cf/cloudflare/clef-flash run behind an AI binding while the browser keeps capture, overlays, and probability meters lightweight.',
 	},
 	{
 		accent: 'ai',
 		title: 'Keep state in the browser',
-		body: 'Zones, event logs, model choices, and PPE assessment state are tab-local, so the demo avoids extra persistence services.',
+		body: 'Zones, event logs, model choices, PPE assessments, and custom Clef question schemas are tab-local, so the demo avoids extra persistence services.',
 	},
 	{
 		accent: 'media',
@@ -33,14 +33,14 @@ const steps = [
 		<Hero
 			kicker="Reference architecture"
 			title="From camera to Workers AI and back"
-			subtitle="A static map of how this demo pushes frames to Cloudflare, runs DETR and vision models on Workers AI, and renders results back over the live video."
+			subtitle="A static map of how this demo pushes frames to Cloudflare, runs DETR, vision LLMs, and Clef Flash on Workers AI, and renders detections and calibrated probabilities back in the browser."
 			model="Astro · Workers · Workers AI · optional Access"
 			meta="static SVG · zero JavaScript"
 			cta={{ label: 'See the architecture', href: '#architecture' }}
 		/>
 		<ArchitectureDiagram />
 		<FlowBreakdown />
-		<HowItWorks title="Why this shape?" subtitle="The same platform primitives support live detection, virtual perimeter monitoring, and PPE compliance with only route-level behavior changes." steps={steps} />
+		<HowItWorks title="Why this shape?" subtitle="The same platform primitives support live detection, virtual perimeter monitoring, PPE compliance, and structured multimodal decisions with only route-level behavior changes." steps={steps} />
 	</main>
 	<Footer />
 </Layout>
